@@ -1,0 +1,34 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Validate Prisma schema
+        run: pnpm --filter @kt/api exec prisma validate
+      - name: Build domain package
+        run: pnpm --filter @kt/domain build
+      - name: Generate Prisma client
+        run: pnpm --filter @kt/api prisma:generate
+      - name: Typecheck
+        run: pnpm -r typecheck
+      - name: Unit and HTTP tests
+        run: pnpm -r test
+      - name: Build web
+        run: pnpm --filter @kt/web build

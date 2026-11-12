@@ -1,0 +1,10 @@
+packages:
+  - "apps/*"
+  - "packages/*"
+
+# Only these dependencies may run install scripts.
+allowBuilds:
+  '@prisma/engines': true
+  prisma: true
+  '@swc/core': true
+  '@scarf/scarf': false

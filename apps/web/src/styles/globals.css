@@ -1,0 +1,360 @@
+@import "tailwindcss";
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Design tokens — working brand "Namma Trails" (brand name lives in src/config/brand.ts)
+   Raw palette lives in @theme; semantic tokens are CSS variables so sections can
+   re-theme (e.g. .theme-ink) without touching components.
+
+   Contrast decisions (WCAG 2.2, sRGB relative luminance):
+   - ink #191713 on cream #F8F2E8 ............ 16.2:1  body text
+   - muted #5F5B54 on cream .................. 6.1:1   secondary text (warm grey #77736C is
+                                                       only 4.25:1 → decorative/large use only)
+   - burnt #B94A2E on cream .................. 4.6:1   small accent text / links
+   - tomato #E65B3F on cream ................. 3.2:1   large display text & graphics only
+   - ink on tomato ........................... 5.0:1   → primary buttons use an ink label
+   - ivory on burnt .......................... 5.1:1   → "strong" buttons use an ivory label
+   - cream on ink / tomato on ink ............ 16:1 / 5.0:1  dark editorial sections
+   ────────────────────────────────────────────────────────────────────────── */
+
+@theme {
+  /* Raw palette */
+  --color-cream: #f8f2e8;
+  --color-ivory: #fffdf8;
+  --color-ink: #191713;
+  --color-ink-soft: #2a2620;
+  --color-tomato: #e65b3f;
+  --color-burnt: #b94a2e;
+  --color-sage: #a7ae91;
+  --color-sage-deep: #4e6b3a;
+  --color-sand: #d9c9af;
+  --color-butter: #ebcb79;
+  --color-butter-deep: #8a6512;
+  --color-grey-warm: #77736c;
+  --color-muted: #5f5b54;
+  --color-sea: #3b6670;
+  --color-sea-light: #9fb8b6;
+
+  /* Breakpoints (Tailwind defaults + extra stops) */
+  --breakpoint-xs: 26rem;
+  --breakpoint-3xl: 112rem;
+
+  /* Radii */
+  --radius-xs: 0.25rem;
+  --radius-sm: 0.5rem;
+  --radius-md: 0.875rem;
+  --radius-lg: 1.25rem;
+  --radius-xl: 1.75rem;
+  --radius-2xl: 2.5rem;
+
+  /* Shadows — warm, low and soft */
+  --shadow-card: 0 1px 2px rgb(25 23 19 / 0.06), 0 8px 24px -12px rgb(25 23 19 / 0.18);
+  --shadow-lift: 0 2px 4px rgb(25 23 19 / 0.06), 0 24px 48px -20px rgb(25 23 19 / 0.32);
+
+  /* Fluid editorial type scale (min @ 360px → max @ 1440px). Kept deliberately restrained: editorial, not oversized. */
+  --text-display-2xl: clamp(2.25rem, 1.5rem + 3.4vw, 4.5rem);
+  --text-display-2xl--line-height: 1;
+  --text-display-2xl--letter-spacing: -0.03em;
+  --text-display-xl: clamp(2rem, 1.4rem + 2.6vw, 3.75rem);
+  --text-display-xl--line-height: 1.02;
+  --text-display-xl--letter-spacing: -0.025em;
+  --text-display-lg: clamp(1.75rem, 1.3rem + 1.8vw, 3rem);
+  --text-display-lg--line-height: 1.08;
+  --text-display-lg--letter-spacing: -0.02em;
+  --text-display-md: clamp(1.5rem, 1.25rem + 1vw, 2.25rem);
+  --text-display-md--line-height: 1.08;
+  --text-display-sm: clamp(1.25rem, 1.15rem + 0.5vw, 1.625rem);
+  --text-display-sm--line-height: 1.15;
+  --text-lead: clamp(1rem, 0.96rem + 0.2vw, 1.125rem);
+  --text-lead--line-height: 1.55;
+  /* Hero headline: scales with width AND height so the whole hero fits the first screen on short laptops. */
+  --text-hero: clamp(2.25rem, min(4.4vw, 7.6vh), 4.75rem);
+  --text-hero--line-height: 1;
+  --text-hero--letter-spacing: -0.025em;
+
+  /* Motion */
+  --ease-editorial: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-swift: cubic-bezier(0.4, 0, 0.2, 1);
+  --animate-fade-up: fade-up 0.7s var(--ease-editorial) both;
+  --animate-shimmer: shimmer 1.6s linear infinite;
+  /* Dropdown lists and the calendar ease in just under the control that opened them. */
+  --animate-pop-in: pop-in 0.16s var(--ease-editorial) both;
+
+  @keyframes fade-up {
+    from {
+      opacity: 0;
+      transform: translateY(16px);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+  @keyframes shimmer {
+    from {
+      background-position: -200% 0;
+    }
+    to {
+      background-position: 200% 0;
+    }
+  }
+  @keyframes pop-in {
+    from {
+      opacity: 0;
+      transform: translateY(-4px);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+}
+
+/* Semantic tokens → Tailwind utilities (bg-surface, text-fg, border-line, …) */
+@theme inline {
+  --font-sans: var(--font-archivo), ui-sans-serif, system-ui, "Segoe UI", sans-serif;
+  --font-display: var(--font-playfair), Georgia, "Times New Roman", serif;
+  --font-script: var(--font-caveat), "Segoe Script", cursive;
+
+  --color-surface: var(--surface);
+  --color-surface-raised: var(--surface-raised);
+  --color-surface-sunken: var(--surface-sunken);
+  --color-fg: var(--fg);
+  --color-fg-muted: var(--fg-muted);
+  --color-fg-subtle: var(--fg-subtle);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+  --color-accent: var(--accent);
+  --color-accent-fg: var(--accent-fg);
+  --color-accent-text: var(--accent-text);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-danger: var(--danger);
+  --color-info: var(--info);
+}
+
+:root {
+  --surface: var(--color-cream);
+  --surface-raised: var(--color-ivory);
+  --surface-sunken: #efe6d6;
+  --fg: var(--color-ink);
+  --fg-muted: var(--color-muted);
+  --fg-subtle: var(--color-grey-warm);
+  --line: rgb(25 23 19 / 0.12);
+  --line-strong: rgb(25 23 19 / 0.28);
+  --accent: var(--color-tomato);
+  --accent-fg: var(--color-ink);
+  --accent-text: var(--color-burnt);
+  --success: var(--color-sage-deep);
+  --warning: var(--color-butter-deep);
+  --danger: var(--color-burnt);
+  --info: var(--color-sea);
+
+  --duration-fast: 160ms;
+  --duration-base: 280ms;
+  --duration-slow: 700ms;
+  /* Public header height: bar (4rem) + the swipe row of links (2.75rem) below xl; bar only from xl. */
+  --header-h: 6.75rem;
+
+  color-scheme: light;
+}
+
+@media (min-width: 80rem) {
+  :root {
+    --header-h: 4rem;
+  }
+}
+
+/* Dark editorial section variant */
+.theme-ink {
+  --surface: var(--color-ink);
+  --surface-raised: var(--color-ink-soft);
+  --surface-sunken: #110f0c;
+  --fg: var(--color-cream);
+  --fg-muted: #cfc6b6;
+  --fg-subtle: #a59d90;
+  --line: rgb(248 242 232 / 0.14);
+  --line-strong: rgb(248 242 232 / 0.32);
+  --accent-text: var(--color-tomato);
+  --success: var(--color-sage);
+  --warning: var(--color-butter);
+  --danger: #f08a73;
+  --info: var(--color-sea-light);
+  color-scheme: dark;
+  background-color: var(--surface);
+  color: var(--fg);
+}
+
+/* Sage editorial variant (light) */
+.theme-sage {
+  --surface: #dfe1d3;
+  --surface-raised: var(--color-ivory);
+  background-color: var(--surface);
+  color: var(--fg);
+}
+
+@layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+    text-rendering: optimizeLegibility;
+    scroll-padding-top: calc(var(--header-h) + 1rem);
+  }
+  body {
+    background-color: var(--surface);
+    color: var(--fg);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+  }
+  :focus-visible {
+    outline: 2px solid var(--accent-text);
+    outline-offset: 3px;
+  }
+  ::selection {
+    background: var(--color-butter);
+    color: var(--color-ink);
+  }
+  h1,
+  h2,
+  h3,
+  h4 {
+    text-wrap: balance;
+  }
+  p {
+    text-wrap: pretty;
+  }
+}
+
+@layer components {
+  .container-editorial {
+    width: 100%;
+    margin-inline: auto;
+    max-width: 90rem;
+    padding-inline: 1rem;
+  }
+  @media (min-width: 40rem) {
+    .container-editorial {
+      padding-inline: 1.5rem;
+    }
+  }
+  @media (min-width: 64rem) {
+    .container-editorial {
+      padding-inline: 2.5rem;
+    }
+  }
+  .eyebrow {
+    font-family: var(--font-sans);
+    font-size: 0.8125rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    color: var(--accent-text);
+  }
+  /* Film grain overlay for placeholders and hero layers */
+  .grain {
+    position: relative;
+    isolation: isolate;
+  }
+  .grain::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    opacity: 0.18;
+    mix-blend-mode: multiply;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 0.1 0 0 0 0 0.09 0 0 0 0 0.07 0 0 0 0.55 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  }
+  /* Neutral darkening over the hero photograph, only where the cream text sits, so the
+     rest of the picture keeps its full colour. Below lg the text is at the bottom; from
+     lg it is on the left. */
+  .hero-scrim {
+    background: linear-gradient(0deg, rgb(25 23 19 / 0.74) 0%, rgb(25 23 19 / 0.52) 42%, rgb(25 23 19 / 0) 74%);
+  }
+  @media (min-width: 64rem) {
+    .hero-scrim {
+      background:
+        linear-gradient(0deg, rgb(25 23 19 / 0.55) 0%, rgb(25 23 19 / 0) 28%),
+        radial-gradient(ellipse 58% 78% at 16% 52%, rgb(25 23 19 / 0.64) 0%, rgb(25 23 19 / 0.44) 46%, rgb(25 23 19 / 0) 100%);
+    }
+  }
+  .skeleton {
+    background: linear-gradient(
+      90deg,
+      var(--surface-sunken) 25%,
+      var(--surface-raised) 50%,
+      var(--surface-sunken) 75%
+    );
+    background-size: 200% 100%;
+    animation: var(--animate-shimmer);
+  }
+  .no-scrollbar {
+    scrollbar-width: none;
+  }
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+/* TextReveal: each word rises out of its own mask */
+@keyframes word-rise {
+  from {
+    transform: translateY(105%);
+  }
+  to {
+    transform: none;
+  }
+}
+
+/* Reveal (components/motion/Reveal.tsx): content is visible by default; the component
+   arms it after hydration only when it is still below the fold and motion is allowed. */
+[data-reveal="armed"] {
+  opacity: 0;
+  transform: translateY(var(--reveal-y, 24px));
+}
+[data-reveal="in"] {
+  transition:
+    opacity 0.8s var(--ease-editorial) var(--reveal-delay, 0s),
+    transform 0.8s var(--ease-editorial) var(--reveal-delay, 0s);
+}
+
+/* Trail line (homepage "How it works"): the dashed route draws in from its start. */
+.trail-line[data-reveal="armed"] {
+  opacity: 1;
+  transform: none;
+  clip-path: inset(0 100% 0 0);
+}
+.trail-line[data-reveal="in"] {
+  clip-path: inset(0 0 0 0);
+  transition: clip-path 1.6s var(--ease-editorial) var(--reveal-delay, 0s);
+}
+
+/* Hero photograph settles into place once on load. */
+@keyframes hero-settle {
+  from {
+    transform: scale(1.06);
+  }
+  to {
+    transform: none;
+  }
+}
+
+/* Lenis (only active on desktop public routes) */
+html.lenis,
+html.lenis body {
+  height: auto;
+}
+.lenis.lenis-smooth {
+  scroll-behavior: auto !important;
+}
+.lenis.lenis-stopped {
+  overflow: hidden;
+}
+
+/* Global reduced-motion handling: keep state changes, drop movement. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

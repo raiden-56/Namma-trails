@@ -1,0 +1,53 @@
+{
+  "name": "@kt/api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "prisma generate && tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "dev": "tsc -p tsconfig.build.json --watch --preserveWatchOutput & node --watch --env-file-if-exists=.env dist/main.js",
+    "start": "node dist/main.js",
+    "test": "vitest run",
+    "prisma:generate": "prisma generate",
+    "prisma:validate": "prisma validate",
+    "prisma:migrate": "prisma migrate dev",
+    "prisma:deploy": "prisma migrate deploy",
+    "db:seed": "node --env-file-if-exists=.env dist/prisma/seed.js",
+    "admin:create": "node --env-file-if-exists=.env dist/prisma/create-admin.js",
+    "db:seed:demo": "node --env-file-if-exists=.env dist/prisma/seed-demo.js",
+    "db:reset:demo": "prisma migrate reset --force && node --env-file-if-exists=.env dist/prisma/seed.js && node --env-file-if-exists=.env dist/prisma/seed-demo.js"
+  },
+  "dependencies": {
+    "@kt/domain": "workspace:*",
+    "@nestjs/common": "12.4.2",
+    "@nestjs/config": "12.1.1",
+    "@nestjs/core": "12.4.2",
+    "@nestjs/jwt": "12.0.4",
+    "@nestjs/platform-express": "12.4.2",
+    "@nestjs/swagger": "12.1.1",
+    "@nestjs/throttler": "6.7.1",
+    "@node-rs/argon2": "2.2.2",
+    "@prisma/adapter-pg": "7.10.1",
+    "@prisma/client": "7.10.1",
+    "helmet": "^8.1.0",
+    "nestjs-pino": "5.3.1",
+    "pg": "^8.16.0",
+    "pino-http": "^11.0.0",
+    "reflect-metadata": "^0.2.2",
+    "rxjs": "^7.8.2",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@nestjs/testing": "12.4.2",
+    "@swc/core": "1.16.22",
+    "@types/express": "^5.0.0",
+    "@types/node": "^24.0.0",
+    "@types/pg": "^8.15.0",
+    "dotenv": "^17.0.0",
+    "prisma": "7.10.1",
+    "typescript": "6.0.3",
+    "unplugin-swc": "2.0.0",
+    "vitest": "5.1.0"
+  }
+}

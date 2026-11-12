@@ -1,0 +1,43 @@
+# Local development dependencies. Postgres is published on 5433 to avoid
+# clashing with any PostgreSQL already installed on the host (5432).
+name: karnataka-tourism
+
+services:
+  postgres:
+    image: postgis/postgis:17-3.5
+    environment:
+      POSTGRES_USER: kt
+      POSTGRES_PASSWORD: kt_dev_password
+      POSTGRES_DB: karnataka_tourism
+    ports: ["5433:5432"]
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U kt -d karnataka_tourism"]
+      interval: 5s
+      retries: 10
+
+  redis:
+    image: redis:7.4-alpine
+    ports: ["6379:6379"]
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes: [redisdata:/data]
+
+  # S3-compatible object storage for development (MinIO no longer publishes free images).
+  # S3Mock accepts any credentials; buckets are created at startup.
+  s3:
+    image: adobe/s3mock:4.11.0
+    environment:
+      COM_ADOBE_TESTING_S3MOCK_STORE_INITIAL_BUCKETS: kt-public,kt-private
+      COM_ADOBE_TESTING_S3MOCK_STORE_RETAIN_FILES_ON_EXIT: "true"
+      COM_ADOBE_TESTING_S3MOCK_STORE_ROOT: /data
+    ports: ["9090:9090"]
+    volumes: [s3data:/data]
+
+  mailpit:
+    image: axllent/mailpit:v1.24
+    ports: ["8025:8025", "1025:1025"]
+
+volumes:
+  pgdata:
+  redisdata:
+  s3data:
