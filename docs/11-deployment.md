@@ -21,7 +21,8 @@ It follows the recommendation below, with these choices made to keep the bill lo
 | Files | S3 public and private buckets | The same, with uploads through one-time links and photos served by CloudFront at `/media/...` | Files never pass through the API tasks |
 | Backups | RDS snapshots + weekly dump | RDS automatic backups, plus an AWS Backup plan (nightly and weekly) in production | A second copy that outlives the database |
 | Logs | CloudWatch | Container logs, counts of errors / audited actions / failed messages, alarms and one dashboard | Free or close to it at this size |
-| Environments | Staging and production | `demo` (API in development mode with demo data) and `production` | The API cannot start in staging or production mode until real payments are built |
+| Test environment | Not planned | `stage`: the whole app on one small EC2 server that is started and stopped by hand (and stopped every night by a schedule). About US$5 a month while off | Testing without paying for a load balancer and a managed database |
+| Environments | Staging and production | `stage`, `demo` (API in development mode with demo data) and `production` | The API cannot start in staging or production mode until real payments are built |
 | Cost | US$350 to 700 a month | About US$50 to 55 (demo) and US$160 to 175 (production at its smallest) | Rough estimates; see the guide |
 
 ## Recommendation

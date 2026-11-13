@@ -4,15 +4,15 @@ name: Deploy to AWS
 #
 # One-time setup is in infra/README.md ("Deploy from GitHub"):
 #   - create the deploy role with CDK and save its ARN as the repository variable AWS_DEPLOY_ROLE_ARN
-#   - create the GitHub environments "demo" and "production" (add reviewers to production)
+#   - create the GitHub environments "stage", "demo" and "production" (add reviewers to production)
 on:
   workflow_dispatch:
     inputs:
       environment:
         description: Which environment to deploy
         type: choice
-        options: [demo, production]
-        default: demo
+        options: [stage, demo, production]
+        default: stage
 
 permissions:
   id-token: write # lets GitHub prove to AWS which repository is running (no stored AWS key)
@@ -52,3 +52,8 @@ jobs:
       # migrations run inside each new API task before it takes traffic.
       - name: Deploy
         run: pnpm exec cdk deploy --all --require-approval never -c env=${{ inputs.environment }}
+      # Stage is one server: it downloads the new images when it starts. This workflow's
+      # AWS role may only deploy, not start or stop servers, so that part is done by hand.
+      - name: How to run the new version on stage
+        if: inputs.environment == 'stage'
+        run: echo "Deployed. On your computer, in the infra folder, run 'pnpm stage:restart' (or 'pnpm stage:start' if the server is stopped)."

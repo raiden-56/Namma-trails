@@ -4,6 +4,8 @@ This folder is an AWS CDK app. It describes everything the site needs on AWS as 
 
 > **Status.** The code builds, turns into valid AWS templates and passes its tests. It has **not been deployed to a real AWS account yet**. The first deploy is the real test. See [What was checked](#what-was-checked-and-what-was-not).
 
+- [Three environments](#three-environments)
+- [Stage: the cheapest way to test](#stage-the-cheapest-way-to-test)
 - [What gets built](#what-gets-built)
 - [Why it is cheap](#why-it-is-cheap)
 - [How auto scaling works](#how-auto-scaling-works)
@@ -17,6 +19,129 @@ This folder is an AWS CDK app. It describes everything the site needs on AWS as 
 - [Deploy from GitHub](#deploy-from-github)
 - [All the settings](#all-the-settings)
 - [What was checked, and what was not](#what-was-checked-and-what-was-not)
+
+---
+
+## Three environments
+
+| | **stage** | **demo** | **production** |
+|---|---|---|---|
+| For | Trying the app now and then | Showing the app, always on | Real visitors |
+| Runs on | One small server (EC2) that you switch on and off | Containers (ECS Fargate) with auto scaling | The same, bigger, in two zones |
+| Database | A container on the server's own disk | Amazon RDS | Amazon RDS with a standby |
+| Cost while off | About US$5 a month | — | — |
+| Cost while on | About 2 US cents an hour more | About US$50 to 55 a month | About US$160 to 175 a month and up |
+| Deploy with | `-c env=stage` | `-c env=demo` | `-c env=production` |
+
+Pick **stage** if you only want to test and keep the bill close to zero. The rest of this guide, from [What gets built](#what-gets-built) on, is about demo and production.
+
+---
+
+## Stage: the cheapest way to test
+
+Stage is the whole app on **one small server**. You start it when you want to test and stop it when you are done.
+
+```
+visitor -> CloudFront (HTTPS, free at this size) -> the server
+                                                      web   the website
+                                                      api   the API
+                                                      db    PostgreSQL, on the server's disk
+```
+
+Only what is needed is created: the server, its disk, a fixed address, CloudFront, and the image store that `cdk deploy` uses anyway. There is **no** load balancer, managed database, NAT gateway, secret store, DynamoDB, firewall or alarm. Settings are in `config/stage.ts`.
+
+### Where it runs today
+
+Stage was deployed on 13 Nov 2026 to **Sydney (`ap-southeast-2`)**, the only region the AWS account allows on its current plan.
+
+- Address: <https://d2ppxhqgzoul0v.cloudfront.net>
+- It was deployed from **AWS CloudShell** (the terminal inside the AWS website), because this computer has no AWS CLI login. The project copy there is in `~/namma`.
+
+To start or stop it without the AWS CLI on your computer, open CloudShell in the Sydney region and run:
+
+```bash
+cd ~/namma/infra && node scripts/stage.mjs start
+```
+
+```bash
+cd ~/namma/infra && node scripts/stage.mjs stop
+```
+
+You can also open **EC2 > Instances** in the AWS website, pick the server named `NammaTrails-Stage/Server`, and use **Instance state > Start / Stop**.
+
+Two things to know about deploying from CloudShell: it has Node 20, so use `npm install --no-package-lock` in `infra` (pnpm 11 needs Node 22), and its disk is small, so run `docker system prune -af` before each `cdk deploy`.
+
+### What it costs
+
+Rough estimates for Mumbai (Sydney is a little dearer). Check them in the AWS Pricing Calculator.
+
+| When | What you pay for | About |
+|---|---|---|
+| **Stopped** | The fixed address (about $3.65), the 16 GB disk (about $1.50), the stored images (cents) | **US$5 a month** |
+| **Running** | The above, plus the `t3.small` server by the hour | **2 to 2.5 US cents an hour** more |
+| **Removed** (`cdk destroy`) | Nothing | **$0** |
+
+Example: testing 20 hours in a month costs about US$5.50 in total.
+
+### First time
+
+You need the same things as in [Before the first deploy](#before-the-first-deploy) (AWS login, AWS CLI, Docker running, `cdk bootstrap` once).
+
+1. Deploy (about 10 minutes):
+
+   ```bash
+   pnpm exec cdk deploy NammaTrails-Stage -c env=stage
+   ```
+
+2. It prints **`SiteUrl`**, for example `https://d1234abcd.cloudfront.net`. Put it into `config/stage.ts`:
+
+   ```ts
+   siteUrl: "https://d1234abcd.cloudfront.net",
+   ```
+
+3. Deploy again and restart the server, so the website is built with its real address:
+
+   ```bash
+   pnpm exec cdk deploy NammaTrails-Stage -c env=stage
+   ```
+
+   ```bash
+   pnpm stage:restart
+   ```
+
+4. Open `SiteUrl` and sign in with a demo account from `docs/15-demo-data.md`. The demo data is loaded by itself on the first start.
+
+### Switching it on and off
+
+Run these in the `infra` folder:
+
+| Command | What it does |
+|---|---|
+| `pnpm stage:start` | Starts the server and waits until the site answers (about a minute) |
+| `pnpm stage:stop` | Stops it. The data is kept. You then pay only for the address and the disk |
+| `pnpm stage:status` | Says if it is running, and its address |
+| `pnpm stage:restart` | Stop and start. Needed after `cdk deploy` to run the new version |
+| `pnpm stage:logs` | Shows what the server printed while starting the app |
+| `pnpm stage:shell` | Prints the command that opens a shell on the server |
+
+**It also stops by itself every night** at midnight India time (`autoStopAtUtc` in `config/stage.ts`), so a forgotten server cannot run up a bill.
+
+To remove everything, including the data:
+
+```bash
+pnpm exec cdk destroy NammaTrails-Stage -c env=stage
+```
+
+### Good to know
+
+- **The data stays** across stop and start: the database lives on the server's disk. It is lost only if you destroy the stack.
+- **A new version:** `cdk deploy`, then `pnpm stage:restart`. The server downloads the new images when it starts, and applies database changes first.
+- **The address never changes**, because of the fixed address behind CloudFront.
+- **Nobody can connect to the server directly.** Only CloudFront reaches the two app ports. There is no SSH; a shell goes through AWS Session Manager.
+- **It runs in development mode**, like the demo: test payments, and messages (sign-in codes too) go to the log, not to phones. Read them with `pnpm stage:logs`, or on the server with `docker logs api`.
+- **Two helper pages are hidden** (the page that shows one-time codes, and the API docs). To use them while testing, set `blockedPaths: []` in `config/stage.ts`.
+- **It is for testing only.** One server, no standby, no managed backups. Do not put real customer data on it.
+- **To spend even less while it runs**, try `instanceType: "t3.micro"` (1 GB memory). The three containers use about 260 MB when idle, so it may fit, but this size was not tried.
 
 ---
 
@@ -415,7 +540,7 @@ pnpm synth
 
 - The CDK code passes the TypeScript check.
 - `cdk synth` makes valid templates for the demo and for production (with a domain, alarms, a budget and the GitHub role), with no AWS login.
-- 20 tests check the important promises: the database and buckets are private, the load balancer is internal, no rule lets the whole internet in, both services scale between their limits on CPU and requests, Spot is used as set, migrations run before the API, and secrets never appear as plain settings. They also check the integrations: the DynamoDB tables, the CDN path for images, the narrow rights for email and SMS, the backup plan and the log counts.
+- 28 tests check the important promises: the database and buckets are private, the load balancer is internal, no rule lets the whole internet in, both services scale between their limits on CPU and requests, Spot is used as set, migrations run before the API, and secrets never appear as plain settings. They also check the integrations: the DynamoDB tables, the CDN path for images, the narrow rights for email and SMS, the backup plan and the log counts.
 - The integrations were run on a computer against stand-ins for AWS (DynamoDB Local and S3Mock), with 37 checks: codes kept in DynamoDB and usable once, shared rate limits, uploads to S3 with one-time links, private documents, soft deletes that keep the data, and booking notifications recorded once each. Email and SMS sending was checked against a recording stand-in, not against real SES and SNS.
 - Both Docker images were built and run on a computer, wired up the way AWS will wire them:
   - a PostgreSQL with SSL switched on (as RDS has), reached with the same five `DB_*` values that ECS injects,

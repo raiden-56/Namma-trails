@@ -43,3 +43,7 @@ jobs:
         run: pnpm test
       - name: Synthesize the demo environment
         run: pnpm exec cdk synth --quiet -c env=demo
+      - name: Synthesize the stage environment
+        run: pnpm exec cdk synth --quiet -c env=stage
+      - name: Check the stage start-up script
+        run: bash -n stage/boot.sh

@@ -13,7 +13,13 @@
     "synth": "cdk synth --quiet",
     "diff": "cdk diff",
     "deploy": "cdk deploy",
-    "cdk": "cdk"
+    "cdk": "cdk",
+    "stage:start": "node scripts/stage.mjs start",
+    "stage:stop": "node scripts/stage.mjs stop",
+    "stage:status": "node scripts/stage.mjs status",
+    "stage:restart": "node scripts/stage.mjs restart",
+    "stage:logs": "node scripts/stage.mjs logs",
+    "stage:shell": "node scripts/stage.mjs shell"
   },
   "devDependencies": {
     "@types/node": "^24.19.2",

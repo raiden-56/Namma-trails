@@ -131,6 +131,8 @@ visitor -> CloudFront -> private load balancer -> web service (Next.js)
 - Email and SMS (Amazon SES and SNS), sign-in codes and rate limits (DynamoDB), image uploads (S3, served through CloudFront at `/media/...`), backups and log tracking (CloudWatch) are all part of it. Each is switched on by a setting.
 - Only the **demo** environment can run today. The API refuses to start in staging or production mode until real payments are built.
 
+There are three environments: **stage** (one small server you switch on and off, about US$5 a month while off and 2 cents an hour while on), **demo** (always on, with auto scaling) and **production**.
+
 Short version (needs an AWS login, the AWS CLI and Docker running):
 
 ```bash
@@ -139,6 +141,8 @@ pnpm install
 pnpm exec cdk bootstrap aws://YOUR_ACCOUNT_ID/ap-south-1
 pnpm exec cdk deploy --all -c env=demo
 ```
+
+For the cheap test environment, deploy `-c env=stage` instead, then use `pnpm stage:start` and `pnpm stage:stop` in the `infra` folder.
 
 The full steps, the settings, the cost table and what to do on a company network are in **[infra/README.md](infra/README.md)**. The design choices are in [docs/11-deployment.md](docs/11-deployment.md).
 
