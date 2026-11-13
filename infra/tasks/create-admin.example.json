@@ -1,0 +1,8 @@
+{
+  "containerOverrides": [
+    {
+      "name": "api",
+      "command": ["node", "dist/prisma/create-admin.js", "--phone", "9876543210", "--name", "Your Name", "--email", "you@example.com", "--role", "super_admin"]
+    }
+  ]
+}

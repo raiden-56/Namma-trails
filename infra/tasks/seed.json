@@ -1,0 +1,3 @@
+{
+  "containerOverrides": [{ "name": "api", "command": ["node", "dist/prisma/seed.js"] }]
+}

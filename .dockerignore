@@ -1,0 +1,28 @@
+# Keeps the Docker build context small. The same file is used by AWS CDK when it
+# fingerprints the images, so a change to an ignored file does not rebuild them.
+
+# Dependencies and build output: always rebuilt inside the image.
+**/node_modules
+**/.next
+**/dist
+**/coverage
+**/*.tsbuildinfo
+apps/api/src/generated
+
+# Local settings and secrets never go into an image.
+**/.env
+**/.env.*
+
+# Not needed to build or run the apps.
+.git
+.github
+infra
+apps/web/e2e
+apps/web/test-results
+apps/web/playwright-report
+apps/api/test
+**/*.log
+
+# Docs: only the user manual is needed (the web app shows it at /user-manual).
+docs/*
+!docs/FEATURES.md

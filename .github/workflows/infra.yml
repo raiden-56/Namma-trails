@@ -1,0 +1,45 @@
+name: Infra checks
+
+# Checks the AWS CDK code whenever it (or a Dockerfile) changes. Creates nothing on AWS.
+on:
+  pull_request:
+    paths:
+      - "infra/**"
+      - "apps/*/Dockerfile"
+      - ".dockerignore"
+      - ".github/workflows/infra.yml"
+  push:
+    branches: [main]
+    paths:
+      - "infra/**"
+      - "apps/*/Dockerfile"
+      - ".dockerignore"
+      - ".github/workflows/infra.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: infra
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: infra/package.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: infra/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - name: Typecheck
+        run: pnpm typecheck
+      - name: Tests
+        run: pnpm test
+      - name: Synthesize the demo environment
+        run: pnpm exec cdk synth --quiet -c env=demo

@@ -10,6 +10,8 @@ const EnvSchema = z
     NODE_ENV: z.enum(["development", "test", "staging", "production"]).default("development"),
     PORT: z.coerce.number().int().default(4000),
     CORS_ORIGINS: z.string().default("http://localhost:3000"),
+    /** How many proxies sit in front of the API, so req.ip is the real visitor. 1 = one load balancer; 2 = CDN + load balancer. */
+    TRUST_PROXY_HOPS: z.coerce.number().int().min(0).max(5).default(1),
     PUBLIC_WEB_URL: z.url().default("http://localhost:3000"),
     DATABASE_URL: z.string().min(1),
     REDIS_URL: z.string().optional(),

@@ -1,0 +1,54 @@
+name: Deploy to AWS
+
+# Runs only when someone presses "Run workflow" in the Actions tab. It never deploys by itself.
+#
+# One-time setup is in infra/README.md ("Deploy from GitHub"):
+#   - create the deploy role with CDK and save its ARN as the repository variable AWS_DEPLOY_ROLE_ARN
+#   - create the GitHub environments "demo" and "production" (add reviewers to production)
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Which environment to deploy
+        type: choice
+        options: [demo, production]
+        default: demo
+
+permissions:
+  id-token: write # lets GitHub prove to AWS which repository is running (no stored AWS key)
+  contents: read
+
+# Never run two deploys of the same environment at once.
+concurrency:
+  group: deploy-${{ inputs.environment }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    environment: ${{ inputs.environment }}
+    defaults:
+      run:
+        working-directory: infra
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: infra/package.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: infra/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - name: Typecheck and tests
+        run: pnpm typecheck && pnpm test
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ap-south-1
+      # Builds both Docker images, uploads them, and updates the stacks. Database
+      # migrations run inside each new API task before it takes traffic.
+      - name: Deploy
+        run: pnpm exec cdk deploy --all --require-approval never -c env=${{ inputs.environment }}

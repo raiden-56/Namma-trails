@@ -13,7 +13,9 @@ async function bootstrap() {
   const env = app.get<Env>(ENV);
   app.useLogger(app.get(Logger));
 
-  app.set("trust proxy", 1); // behind one load balancer: req.ip is the client IP
+  // req.ip must be the visitor's address (rate limits use it). Locally that is one hop;
+  // on AWS it is two: CloudFront, then the load balancer (TRUST_PROXY_HOPS=2).
+  app.set("trust proxy", env.TRUST_PROXY_HOPS);
   app.use(helmet());
   app.useBodyParser("json", { limit: "1mb" });
   app.enableCors({

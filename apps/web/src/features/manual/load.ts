@@ -66,14 +66,17 @@ export function loadManual(): Manual | null {
   const publicDir = firstExisting([path.join(cwd, "public"), path.join(cwd, "apps", "web", "public")]);
   if (!file || !publicDir) return null;
 
-  const blocks: ManualBlock[] = parseMarkdown(fs.readFileSync(file, "utf8")).map((block) => {
+  // The page is made once, at build time, so these files are not needed by the running
+  // server. The "turbopackIgnore" comments tell the build not to copy the whole project
+  // into the server output because of these two reads.
+  const blocks: ManualBlock[] = parseMarkdown(fs.readFileSync(/* turbopackIgnore: true */ file, "utf8")).map((block) => {
     if (block.type !== "pictures") return block;
     return {
       type: "pictures" as const,
       items: block.items.flatMap((item) => {
         const url = manualImageUrl(item.src);
         if (!url) return [];
-        const size = imageSize(path.join(publicDir, url));
+        const size = imageSize(path.join(/* turbopackIgnore: true */ publicDir, url));
         return [{ ...item, src: url, fileWidth: size.width, fileHeight: size.height }];
       }),
     };

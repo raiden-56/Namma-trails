@@ -1,0 +1,3 @@
+node_modules/
+# What `cdk synth` writes: the CloudFormation templates and copies of the build files.
+cdk.out/

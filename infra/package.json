@@ -1,0 +1,28 @@
+{
+  "name": "@kt/infra",
+  "version": "0.1.0",
+  "private": true,
+  "description": "AWS CDK app that hosts Namma Trails on AWS: ECS Fargate with auto scaling, RDS PostgreSQL, a load balancer and CloudFront.",
+  "packageManager": "pnpm@11.18.0",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "node --import tsx --test test/*.test.ts",
+    "synth": "cdk synth --quiet",
+    "diff": "cdk diff",
+    "deploy": "cdk deploy",
+    "cdk": "cdk"
+  },
+  "devDependencies": {
+    "@types/node": "^24.19.2",
+    "aws-cdk": "^2.1148.1",
+    "tsx": "^4.23.15",
+    "typescript": "6.0.3"
+  },
+  "dependencies": {
+    "aws-cdk-lib": "^2.276.0",
+    "constructs": "^10.8.1"
+  }
+}

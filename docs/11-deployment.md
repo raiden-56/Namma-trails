@@ -2,6 +2,23 @@
 
 Nothing is deployed yet. This is the target design; the staging deployment happens in Phase 9 and will be recorded here once it has been verified.
 
+## What is in the repository now
+
+The AWS setup is written as code in [`infra/`](../infra/README.md) (AWS CDK, TypeScript), with a Dockerfile for the web app and one for the API. It has been type-checked, tested and synthesized, and both images were run locally. **It has not been deployed to an AWS account yet.** The step-by-step guide, the settings and the cost estimate are in [`infra/README.md`](../infra/README.md).
+
+It follows the recommendation below, with these choices made to keep the bill low:
+
+| Topic | Target design below | What `infra/` does today | Why |
+|---|---|---|---|
+| Addresses | `www.` for web, `api.` for the API | One address: `/api/*` and `/health` go to the API, the rest to the web app | One load balancer instead of two, and sign-in cookies stay same-site |
+| Load balancer | Public ALB behind CloudFront | Internal ALB that only CloudFront can reach (CloudFront VPC origin) | No public address to pay for or protect |
+| Network | Not decided | No NAT gateway: tasks in public subnets, firewall lets only the load balancer in | About US$40 a month saved per gateway. A switch turns NAT on |
+| Compute | Fargate | Fargate with auto scaling, on Fargate Spot (all tasks in the demo; all but the first in production) | About 70% off compute |
+| Migrations | A one-off ECS task per release | A first container in every API task runs `prisma migrate deploy` | No separate pipeline step; a failed migration stops the release by itself |
+| Redis, SES, WAF | Listed | Redis is a switch (off: the API does not use it yet). SES is not set up. WAF is on for production only | Pay only for what the code uses |
+| Environments | Staging and production | `demo` (API in development mode with demo data) and `production` | The API cannot start in staging or production mode until real messaging and payments are built |
+| Cost | US$350 to 700 a month | About US$50 to 55 (demo) and US$160 to 175 (production at its smallest) | Rough estimates; see the guide |
+
 ## Recommendation
 
 Use AWS **Mumbai (`ap-south-1`)** for everything that stores personal data, with managed services so a small team can run it.

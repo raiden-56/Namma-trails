@@ -17,6 +17,9 @@
     "db:seed": "pnpm --filter @kt/api db:seed",
     "test:e2e": "pnpm --filter @kt/web test:e2e",
     "db:seed:demo": "pnpm --filter @kt/api db:seed:demo",
-    "db:reset:demo": "pnpm --filter @kt/api build && pnpm --filter @kt/api db:reset:demo"
+    "db:reset:demo": "pnpm --filter @kt/api build && pnpm --filter @kt/api db:reset:demo",
+    "infra:install": "pnpm --dir infra install",
+    "infra:test": "pnpm --dir infra typecheck && pnpm --dir infra test",
+    "infra:synth": "pnpm --dir infra synth"
   }
 }
