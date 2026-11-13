@@ -65,6 +65,19 @@ Status: 🟡 implemented and compiling; auth-guard and validation behaviour cove
 ⬜ P5: POST `/trips`, POST/DELETE `/trips/{id}/items`, POST `/trips/{id}/checkout` (Idempotency-Key), GET `/trips`, GET `/trips/{id}`, POST `/bookings/{id}/cancel` (preview + confirm), GET `/bookings/{id}/ticket` (QR).
 ⬜ P6: POST `/payments/verify`, POST `/payments/webhooks/razorpay` (raw body, HMAC verified, idempotent by event id), GET `/payments/history`, GET `/invoices/{id}`.
 
+### Media (file uploads) — `/media`
+
+Files go straight from the browser to Amazon S3; the API only signs and checks.
+
+| Method | Path | What it does |
+|---|---|---|
+| POST | `/media/uploads` | Start an upload. Body: `purpose` (`service_photo`, `destination_photo`, `provider_document`), `mimeType`, `sizeBytes`, `providerId`. Returns a one-time `uploadUrl` (PUT, 5 minutes) |
+| POST | `/media/uploads/{id}/complete` | The server checks the file that arrived. Returns the public address of a photo (`null` for a private document) |
+| GET | `/media/{id}/download-url` | A 60-second link to read a file. Private documents: the owning organisation or a reviewer only |
+| DELETE | `/media/{id}` | Soft delete: the file is hidden, not destroyed |
+
+Photos need `org.listing.manage` (or `destination.manage` for town photos); documents need `org.documents.manage`. Public files are served at `MEDIA_BASE_URL/media/...` (on AWS: CloudFront in front of S3).
+
 ### Customer experience
 ⬜ P4/P7: `/me/favourites`, `/me/travellers`, `/me/emergency-contacts`, `/reviews` (completed bookings only), `/notifications`, `/support/tickets` (+ messages, incident reports, SOS context), `/trips/{id}/share`.
 

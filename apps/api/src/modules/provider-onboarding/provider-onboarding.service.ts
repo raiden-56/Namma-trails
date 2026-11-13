@@ -96,16 +96,24 @@ export class ProviderOnboardingService {
     if (destinations.length !== new Set(input.destinationSlugs).size) throw ApiError.badRequest("UNKNOWN_DESTINATION", "One or more destinations are not open for partners yet");
 
     await this.prisma.$transaction(async (tx) => {
-      await tx.providerCategory.deleteMany({ where: { providerId, categoryId: { notIn: categories.map((c) => c.id) } } });
+      const now = new Date();
+      // Soft delete: a dropped category or town is marked as removed, never deleted.
+      await tx.providerCategory.updateMany({ where: { providerId, removedAt: null, categoryId: { notIn: categories.map((c) => c.id) } }, data: { removedAt: now } });
       for (const c of categories) {
-        await tx.providerCategory.upsert({
-          where: { providerId_categoryId: { providerId, categoryId: c.id } },
-          create: { providerId, categoryId: c.id },
-          update: {},
+        const key = { providerId_categoryId: { providerId, categoryId: c.id } };
+        const existing = await tx.providerCategory.findUnique({ where: key, select: { removedAt: true } });
+        if (!existing) await tx.providerCategory.create({ data: { providerId, categoryId: c.id } });
+        // A category that comes back is reviewed again, exactly like a new one.
+        else if (existing.removedAt) await tx.providerCategory.update({ where: key, data: { removedAt: null, status: "pending", reviewedBy: null, reviewedAt: null } });
+      }
+      await tx.providerDestination.updateMany({ where: { providerId, removedAt: null, destinationId: { notIn: destinations.map((d) => d.id) } }, data: { removedAt: now } });
+      for (const d of destinations) {
+        await tx.providerDestination.upsert({
+          where: { providerId_destinationId: { providerId, destinationId: d.id } },
+          create: { providerId, destinationId: d.id },
+          update: { removedAt: null },
         });
       }
-      await tx.providerDestination.deleteMany({ where: { providerId } });
-      await tx.providerDestination.createMany({ data: destinations.map((d) => ({ providerId, destinationId: d.id })) });
       await this.audit.record(
         { actorId: principal.userId, actorType: "provider", action: "provider.scope.update", entityType: "provider", entityId: providerId, providerId, after: input },
         tx,
@@ -120,8 +128,8 @@ export class ProviderOnboardingService {
     const provider = await this.prisma.provider.findUnique({
       where: { id: providerId },
       include: {
-        categories: { include: { category: { select: { id: true, key: true, name: true } } } },
-        destinations: { include: { destination: { select: { id: true, slug: true, name: true } } } },
+        categories: { where: { removedAt: null }, include: { category: { select: { id: true, key: true, name: true } } } },
+        destinations: { where: { removedAt: null }, include: { destination: { select: { id: true, slug: true, name: true } } } },
         documents: { where: { inventoryItemId: null, status: { not: "superseded" } }, include: { documentType: { select: { key: true, label: true } } } },
         verificationEvents: {
           orderBy: { createdAt: "asc" },
@@ -170,7 +178,7 @@ export class ProviderOnboardingService {
     }
     const [evaluation, scope] = await Promise.all([
       this.evaluate(providerId),
-      this.prisma.provider.findUniqueOrThrow({ where: { id: providerId }, select: { _count: { select: { categories: true, destinations: true } } } }),
+      this.prisma.provider.findUniqueOrThrow({ where: { id: providerId }, select: { _count: { select: { categories: { where: { removedAt: null } }, destinations: { where: { removedAt: null } } } } } }),
     ]);
     if (scope._count.categories === 0 || scope._count.destinations === 0) {
       throw ApiError.badRequest("SCOPE_REQUIRED", "Choose at least one service category and destination");
@@ -203,7 +211,7 @@ export class ProviderOnboardingService {
       select: {
         state: true,
         district: true,
-        categories: { select: { category: { select: { key: true, id: true } } } },
+        categories: { where: { removedAt: null }, select: { category: { select: { key: true, id: true } } } },
         documents: { where: { inventoryItemId: null, status: { not: "superseded" } }, select: { status: true, expiresOn: true, documentType: { select: { key: true } } } },
       },
     });

@@ -37,7 +37,18 @@ services:
     image: axllent/mailpit:v1.24
     ports: ["8025:8025", "1025:1025"]
 
+  # Optional: a local Amazon DynamoDB, only needed to try the DynamoDB stores
+  # (one-time codes, rate limits). Not started by `pnpm db:up`:
+  #   docker compose up -d dynamodb && pnpm --filter @kt/api dynamodb:local
+  dynamodb:
+    image: amazon/dynamodb-local:latest
+    command: ["-jar", "DynamoDBLocal.jar", "-sharedDb", "-dbPath", "/data"]
+    user: root
+    ports: ["8000:8000"]
+    volumes: [dynamodata:/data]
+
 volumes:
   pgdata:
   redisdata:
   s3data:
+  dynamodata:

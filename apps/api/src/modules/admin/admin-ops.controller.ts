@@ -188,7 +188,7 @@ export class AdminOpsService {
         providerStatus: s.provider.status,
         providerDocumentsVerified: s.provider.status === "approved",
         listingStatus: "approved",
-        providerCategoryApproved: pc?.status === "approved",
+        providerCategoryApproved: pc?.status === "approved" && pc.removedAt === null,
         destinationStatus: s.destination.status,
         categoryEnabledInDestination: dc?.isEnabled ?? false,
         assetDocumentsVerified: true,

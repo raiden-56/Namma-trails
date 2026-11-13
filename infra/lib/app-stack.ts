@@ -10,14 +10,16 @@ import * as ec2 from "aws-cdk-lib/aws-ec2";
 import { DockerImageAsset, Platform } from "aws-cdk-lib/aws-ecr-assets";
 import * as ecs from "aws-cdk-lib/aws-ecs";
 import * as elbv2 from "aws-cdk-lib/aws-elasticloadbalancingv2";
+import * as iam from "aws-cdk-lib/aws-iam";
 import * as logs from "aws-cdk-lib/aws-logs";
+import * as s3 from "aws-cdk-lib/aws-s3";
 import * as route53 from "aws-cdk-lib/aws-route53";
 import * as route53Targets from "aws-cdk-lib/aws-route53-targets";
 import * as sns from "aws-cdk-lib/aws-sns";
 import * as subscriptions from "aws-cdk-lib/aws-sns-subscriptions";
 import * as wafv2 from "aws-cdk-lib/aws-wafv2";
 import type { Construct } from "constructs";
-import { knownSiteUrl, type EnvironmentConfig } from "../config/environments";
+import { addressOf, knownSiteUrl, mailFromOf, type EnvironmentConfig } from "../config/environments";
 import type { DataStack } from "./data-stack";
 import { API_PORT, WEB_PORT, type NetworkStack } from "./network-stack";
 import { ScalingService } from "./scaling-service";
@@ -62,6 +64,8 @@ export class AppStack extends Stack {
     };
     const imagePlatform = arm ? Platform.LINUX_ARM64 : Platform.LINUX_AMD64;
     const logRetention = LOG_RETENTION[config.logRetentionDays];
+    const sendsWithAws = config.messagingProvider === "aws";
+    const mailFrom = mailFromOf(config);
 
     // On a company network that inspects HTTPS, the image builds must trust the company's
     // root certificate to download packages and fonts. If NODE_EXTRA_CA_CERTS points at
@@ -117,6 +121,15 @@ export class AppStack extends Stack {
       responseHeadersPolicy: cloudfront.ResponseHeadersPolicy.SECURITY_HEADERS,
       compress: true,
     };
+    // Uploaded photos: "/media/*" is read from the public bucket (keys there start with
+    // "media/", so the path maps one to one). The bucket itself stays private; its policy,
+    // in the data stack, lets only CloudFront read it.
+    const mediaOrigin = origins.S3BucketOrigin.withOriginAccessControl(
+      s3.Bucket.fromBucketAttributes(this, "MediaBucket", {
+        bucketName: data.publicBucket.bucketName,
+        bucketRegionalDomainName: data.publicBucket.bucketRegionalDomainName,
+      }),
+    );
     const domainNames = config.domain ? [config.domain.name, ...(config.domain.alternateNames ?? [])] : undefined;
     const distribution = new cloudfront.Distribution(this, "Distribution", {
       comment: `Namma Trails (${config.name})`,
@@ -128,6 +141,15 @@ export class AppStack extends Stack {
         cachePolicy: cloudfront.CachePolicy.CACHING_DISABLED,
       },
       additionalBehaviors: {
+        // Uploaded photos come straight from the bucket and are cached at the edge, so
+        // they cost the web and API tasks nothing.
+        "/media/*": {
+          origin: mediaOrigin,
+          viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+          cachePolicy: cloudfront.CachePolicy.CACHING_OPTIMIZED,
+          responseHeadersPolicy: cloudfront.ResponseHeadersPolicy.SECURITY_HEADERS,
+          compress: true,
+        },
         // Build files have a fingerprint in their name and never change: cache them for a long time.
         "/_next/static/*": { ...forwardEverything, cachePolicy: cloudfront.CachePolicy.CACHING_OPTIMIZED },
         // Resized pictures: cached as long as the app says, one copy per size and quality.
@@ -141,6 +163,10 @@ export class AppStack extends Stack {
       // Price class 200 includes the edge locations in India.
       priceClass: cloudfront.PriceClass.PRICE_CLASS_200,
     });
+
+    // CDK cannot edit the policy of a bucket from another stack and warns about it.
+    // The policy is written in the data stack (AllowCloudFrontToReadMedia).
+    Annotations.of(this).acknowledgeWarning("@aws-cdk/aws-cloudfront-origins:updateImportedBucketPolicyOac", "The bucket policy is written in the data stack");
 
     if (config.domain) {
       const zone = route53.HostedZone.fromHostedZoneAttributes(this, "Zone", {
@@ -217,6 +243,21 @@ export class AppStack extends Stack {
         S3_REGION: this.region,
         S3_PUBLIC_BUCKET: data.publicBucket.bucketName,
         S3_PRIVATE_BUCKET: data.privateBucket.bucketName,
+        // Uploaded public files are served by the CDN at <site>/media/...
+        MEDIA_BASE_URL: siteUrl,
+        // One-time codes and rate-limit counters in DynamoDB, shared by all API tasks.
+        ...(data.otpTable && data.rateLimitTable
+          ? {
+              OTP_STORE: "dynamodb",
+              DYNAMODB_TABLE_OTP: data.otpTable.tableName,
+              RATE_LIMIT_STORE: "dynamodb",
+              DYNAMODB_TABLE_RATE_LIMITS: data.rateLimitTable.tableName,
+            }
+          : {}),
+        ...(sendsWithAws && mailFrom ? { MAIL_FROM: mailFrom } : {}),
+        ...(sendsWithAws && config.sms?.senderId ? { SMS_SENDER_ID: config.sms.senderId } : {}),
+        ...(sendsWithAws && config.sms?.dltEntityId ? { SMS_DLT_ENTITY_ID: config.sms.dltEntityId } : {}),
+        ...(sendsWithAws && config.sms?.dltOtpTemplateId ? { SMS_DLT_TEMPLATE_ID_OTP: config.sms.dltOtpTemplateId } : {}),
         ...(data.redisUrl ? { REDIS_URL: data.redisUrl } : {}),
       },
       secrets: {
@@ -230,8 +271,25 @@ export class AppStack extends Stack {
     });
     api.addContainerDependencies({ container: migrate, condition: ecs.ContainerDependencyCondition.SUCCESS });
 
+    // The API task gets exactly the rights it needs, through its own role. No access keys exist.
     data.publicBucket.grantReadWrite(apiTask.taskRole);
     data.privateBucket.grantReadWrite(apiTask.taskRole);
+    data.otpTable?.grantReadWriteData(apiTask.taskRole);
+    data.rateLimitTable?.grantReadWriteData(apiTask.taskRole);
+    if (sendsWithAws && mailFrom) {
+      apiTask.taskRole.addToPrincipalPolicy(
+        new iam.PolicyStatement({
+          sid: "SendEmailFromOurAddress",
+          actions: ["ses:SendEmail"],
+          resources: ["*"],
+          conditions: { StringEquals: { "ses:FromAddress": addressOf(mailFrom) } },
+        }),
+      );
+      // Text messages go straight to a phone number. "Not any topic" keeps the right that narrow.
+      apiTask.taskRole.addToPrincipalPolicy(
+        new iam.PolicyStatement({ sid: "SendSmsToPhones", actions: ["sns:Publish"], notResources: [`arn:${this.partition}:sns:*:*:*`] }),
+      );
+    }
 
     const apiService = new ScalingService(this, "Api", {
       cluster,
@@ -339,11 +397,30 @@ export class AppStack extends Stack {
       new wafv2.CfnWebACLAssociation(this, "WebAclAssociation", { resourceArn: loadBalancer.loadBalancerArn, webAclArn: webAcl.attrArn });
     }
 
+    // ── Log tracking ─────────────────────────────────────────────────────────
+    // Everything the containers print goes to CloudWatch Logs (apiLogs, webLogs). The API
+    // writes one JSON line per request, per audited action and per message it sends.
+    // These filters turn three kinds of line into numbers that can be charted and alarmed on.
+    const fiveMinutes = Duration.minutes(5);
+    const logMetric = (id: string, metricName: string, filterPattern: logs.IFilterPattern) =>
+      new logs.MetricFilter(this, id, { logGroup: apiLogs, filterPattern, metricNamespace: `NammaTrails/${config.name}`, metricName, metricValue: "1", defaultValue: 0 }).metric({
+        statistic: "Sum",
+        period: fiveMinutes,
+      });
+    // Level 50 and above are errors in the API's log format.
+    const apiErrorLines = logMetric("ApiErrorLines", "ApiErrors", logs.FilterPattern.numberValue("$.level", ">=", 50));
+    // Who did what: every create, change, approval and delete the API audits.
+    const auditedActions = logMetric("AuditedActions", "AuditedActions", logs.FilterPattern.booleanValue("$.audit", true));
+    const failedMessages = logMetric(
+      "FailedMessages",
+      "FailedMessages",
+      logs.FilterPattern.all(logs.FilterPattern.booleanValue("$.notification", true), logs.FilterPattern.stringValue("$.status", "=", "failed")),
+    );
+
     // ── Alarms and budget (only with an email address) ───────────────────────
     if (config.alarmEmail) {
       const topic = new sns.Topic(this, "Alarms", { displayName: `Namma Trails ${config.name} alarms` });
       topic.addSubscription(new subscriptions.EmailSubscription(config.alarmEmail));
-      const fiveMinutes = Duration.minutes(5);
       const alarm = (id: string, description: string, metric: cloudwatch.IMetric, threshold: number, options: Partial<cloudwatch.AlarmProps> = {}) => {
         const created = new cloudwatch.Alarm(this, id, {
           alarmDescription: description,
@@ -369,6 +446,8 @@ export class AppStack extends Stack {
       alarm("DatabaseDiskLow", "Database disk space is under 2 GB", data.database.metricFreeStorageSpace({ period: fiveMinutes }), 2 * 1024 ** 3, {
         comparisonOperator: cloudwatch.ComparisonOperator.LESS_THAN_OR_EQUAL_TO_THRESHOLD,
       });
+      alarm("ApiErrorLogs", "The API is logging errors", apiErrorLines, 5);
+      alarm("MessagesFailing", "Emails or SMS are failing to send", failedMessages, 3);
 
       if (config.monthlyBudgetUsd) {
         const subscribers = [{ subscriptionType: "EMAIL", address: config.alarmEmail }];
@@ -385,6 +464,30 @@ export class AppStack extends Stack {
           ],
         });
       }
+    }
+
+    // ── Dashboard ────────────────────────────────────────────────────────────
+    if (config.dashboard) {
+      const graph = (title: string, left: cloudwatch.IMetric[], right: cloudwatch.IMetric[] = []) => new cloudwatch.GraphWidget({ title, left, right, width: 12, height: 6 });
+      const sum = { statistic: "Sum", period: fiveMinutes };
+      new cloudwatch.Dashboard(this, "Dashboard", {
+        dashboardName: prefix,
+        widgets: [
+          [
+            graph("Requests and server errors", [loadBalancer.metrics.requestCount(sum)], [loadBalancer.metrics.httpCodeTarget(elbv2.HttpCodeTarget.TARGET_5XX_COUNT, sum)]),
+            graph("Response time (seconds)", [loadBalancer.metrics.targetResponseTime({ statistic: "p50", period: fiveMinutes }), loadBalancer.metrics.targetResponseTime({ statistic: "p95", period: fiveMinutes })]),
+          ],
+          [
+            graph("API: CPU and memory (%)", [apiService.service.metricCpuUtilization({ period: fiveMinutes }), apiService.service.metricMemoryUtilization({ period: fiveMinutes })]),
+            graph("Web: CPU and memory (%)", [webService.service.metricCpuUtilization({ period: fiveMinutes }), webService.service.metricMemoryUtilization({ period: fiveMinutes })]),
+          ],
+          [
+            graph("Healthy tasks (auto scaling at work)", [apiService.targetGroup.metrics.healthyHostCount({ period: fiveMinutes }), webService.targetGroup.metrics.healthyHostCount({ period: fiveMinutes })]),
+            graph("Database: CPU (%) and connections", [data.database.metricCPUUtilization({ period: fiveMinutes })], [data.database.metricDatabaseConnections({ period: fiveMinutes })]),
+          ],
+          [graph("From the logs: errors and failed messages", [apiErrorLines, failedMessages]), graph("From the logs: audited actions", [auditedActions])],
+        ],
+      });
     }
 
     // ── Things you need after the deploy ─────────────────────────────────────

@@ -468,7 +468,7 @@ These things are planned but not in the app today. The landing page does not cla
 | Not built yet | What you see instead |
 |---|---|
 | Real payment gateway (Razorpay) | A test payment simulator at checkout |
-| Document upload by partners | The dashboard lists the documents needed; demo documents are loaded by the seed script |
+| Document upload by partners | The storage and the upload rules are built in the API, but there is no upload screen yet. The dashboard lists the documents needed; demo documents are loaded by the seed script |
 | Partners creating and editing their own listings | The Listings page says the team sets listings up for now |
 | Booking several services in one checkout | Each booking is paid on its own |
 | Inviting staff from the partner portal | Menu item shown as "Phase 3" |
@@ -478,7 +478,7 @@ These things are planned but not in the app today. The landing page does not cla
 | Saved places and the account page | Empty placeholder pages |
 | Writing blog articles in an admin screen | The four articles are written in a code file (`apps/web/src/content/blog.ts`) |
 | Price and rating shown in search results for a listing | Listing pages have a title, description and picture for search, but not this extra data yet |
-| Notifications (SMS, email), password reset screen | Not built |
+| Notifications in the app, password reset screen | Emails and SMS about bookings and partner applications are sent when the AWS sender is switched on (on a developer's computer they only go to the log). A list of notifications inside the app, and the password reset screen, are not built |
 | Admin settings (commission rules, tax rules) | Menu item shown as "Phase 8" |
 
 The full plan and progress list is in [14-roadmap.md](14-roadmap.md).

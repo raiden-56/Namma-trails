@@ -1,3 +1,4 @@
+import { publicMediaUrl } from "../../common/media-url.js";
 import { Body, Controller, Get, HttpCode, Injectable, Param, Post, Query } from "@nestjs/common";
 import { ApiOperation, ApiTags } from "@nestjs/swagger";
 import { SERVICE_CATEGORY_KEYS, localDate, slug } from "@kt/domain";
@@ -44,7 +45,7 @@ const searchSchema = z.object({
   pageSize: z.coerce.number().int().min(1).max(48).default(12),
 });
 
-export const mediaUrl = (m: { bucket: string; objectKey: string }) => (m.bucket === "static" ? m.objectKey : `/media/${m.objectKey}`);
+export const mediaUrl = publicMediaUrl;
 
 @Injectable()
 export class MarketplaceService {
@@ -87,7 +88,7 @@ export class MarketplaceService {
           destination: { select: { slug: true, name: true } },
           provider: { select: { displayName: true, status: true } },
           pricePlans: { where: { isActive: true }, select: { model: true }, take: 1 },
-          media: { where: { isCover: true }, include: { media: true }, take: 1 },
+          media: { where: { isCover: true, media: { deletedAt: null } }, include: { media: true }, take: 1 },
         },
       }),
     ]);
@@ -123,7 +124,7 @@ export class MarketplaceService {
         destination: { select: { slug: true, name: true, district: true } },
         provider: { select: { id: true, slug: true, displayName: true, status: true, ratingAvg: true, ratingCount: true, description: true, approvedAt: true } },
         cancellationPolicy: true,
-        media: { include: { media: true }, orderBy: [{ isCover: "desc" }, { sortOrder: "asc" }] },
+        media: { where: { media: { deletedAt: null } }, include: { media: true }, orderBy: [{ isCover: "desc" }, { sortOrder: "asc" }] },
         locations: { orderBy: { sortOrder: "asc" }, select: { kind: true, name: true, addressLine: true, instructions: true } },
         inventoryItems: { where: { isActive: true }, orderBy: { name: "asc" }, select: { id: true, name: true, capacity: true, totalUnits: true, attributes: true, tags: true } },
         pricePlans: { where: { isActive: true }, select: { id: true, inventoryItemId: true, model: true, baseAmount: true, childAmount: true, depositPerUnit: true, extraAdultAmount: true, perKmAmount: true, minimumFare: true } },

@@ -16,9 +16,16 @@
     "db:seed": "node --env-file-if-exists=.env dist/prisma/seed.js",
     "admin:create": "node --env-file-if-exists=.env dist/prisma/create-admin.js",
     "db:seed:demo": "node --env-file-if-exists=.env dist/prisma/seed-demo.js",
-    "db:reset:demo": "prisma migrate reset --force && node --env-file-if-exists=.env dist/prisma/seed.js && node --env-file-if-exists=.env dist/prisma/seed-demo.js"
+    "db:reset:demo": "prisma migrate reset --force && node --env-file-if-exists=.env dist/prisma/seed.js && node --env-file-if-exists=.env dist/prisma/seed-demo.js",
+    "dynamodb:local": "node scripts/local-dynamodb.mjs"
   },
   "dependencies": {
+    "@aws-sdk/client-dynamodb": "^3.1167.0",
+    "@aws-sdk/client-s3": "^3.1167.0",
+    "@aws-sdk/client-sesv2": "^3.1167.0",
+    "@aws-sdk/client-sns": "^3.1167.0",
+    "@aws-sdk/lib-dynamodb": "^3.1167.0",
+    "@aws-sdk/s3-request-presigner": "^3.1167.0",
     "@kt/domain": "workspace:*",
     "@nestjs/common": "12.4.2",
     "@nestjs/config": "12.1.1",

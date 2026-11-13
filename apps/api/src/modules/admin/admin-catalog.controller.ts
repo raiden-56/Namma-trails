@@ -45,9 +45,9 @@ export class AdminCatalogService {
         orderBy: [{ launchPhase: "asc" }, { sortOrder: "asc" }],
         include: { categories: { include: { category: { select: { key: true, name: true } } } } },
       }),
-      this.prisma.providerDestination.groupBy({ by: ["destinationId"], where: { provider: { status: "approved", deletedAt: null } }, _count: { _all: true } }),
+      this.prisma.providerDestination.groupBy({ by: ["destinationId"], where: { removedAt: null, provider: { status: "approved", deletedAt: null } }, _count: { _all: true } }),
       this.prisma.service.groupBy({ by: ["destinationId"], where: { status: "published", deletedAt: null }, _count: { _all: true } }),
-      this.prisma.providerDestination.groupBy({ by: ["destinationId"], where: { provider: { deletedAt: null } }, _count: { _all: true } }),
+      this.prisma.providerDestination.groupBy({ by: ["destinationId"], where: { removedAt: null, provider: { deletedAt: null } }, _count: { _all: true } }),
     ]);
     const count = (list: { destinationId: string; _count: { _all: number } }[], id: string) => list.find((r) => r.destinationId === id)?._count._all ?? 0;
     return rows.map((d) => ({

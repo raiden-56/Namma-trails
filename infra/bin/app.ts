@@ -10,6 +10,7 @@ import { buildStacks } from "../lib/build-stacks";
  * Other optional values, also passed with -c:
  *   siteUrl            the CloudFront address, when you have no domain (second deploy)
  *   alarmEmail         where alarms and budget warnings are sent
+ *   mailFrom           the sender of every email (with messagingProvider "aws")
  *   monthlyBudgetUsd   warn when the month's bill passes 80% of this
  *   domainName, hostedZoneId, hostedZoneName   your own domain in Route 53
  *   githubRepo         "owner/name": also create the role GitHub Actions deploys with
@@ -23,6 +24,7 @@ const context = (name: string): string | undefined => {
 
 const config = resolveConfig(context("env") ?? "demo", {
   siteUrl: context("siteUrl"),
+  mailFrom: context("mailFrom"),
   alarmEmail: context("alarmEmail"),
   monthlyBudgetUsd: context("monthlyBudgetUsd"),
   domainName: context("domainName"),

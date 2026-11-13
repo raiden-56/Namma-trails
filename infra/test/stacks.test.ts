@@ -189,8 +189,10 @@ test("CloudFront: HTTPS only, pages never cached, build files cached", () => {
   assert.equal(config.DefaultCacheBehavior.AllowedMethods.length, 7);
   const staticFiles = (config.CacheBehaviors as Json[]).find((b) => b.PathPattern === "/_next/static/*");
   assert.equal(staticFiles?.CachePolicyId, CACHING_OPTIMIZED);
-  assert.equal(config.Origins.length, 1);
-  assert.ok(config.Origins[0].VpcOriginConfig, "the origin must be a VPC origin");
+  // Two origins: the private load balancer (pages and API) and the media bucket.
+  assert.equal(config.Origins.length, 2);
+  const appOrigin = (config.Origins as Json[]).find((o) => o.Id === config.DefaultCacheBehavior.TargetOriginId);
+  assert.ok(appOrigin?.VpcOriginConfig, "pages and API must come through the VPC origin");
   demo.app.hasResourceProperties("AWS::CloudFront::VpcOrigin", { VpcOriginEndpointConfig: Match.objectLike({ OriginProtocolPolicy: "http-only", HTTPPort: 80 }) });
   assert.equal(config.Aliases, undefined);
 });
@@ -205,7 +207,7 @@ test("demo keeps the bill small: no firewall, no alarms, no cache, no certificat
 test("production: firewall, alarms, budget, own domain with certificate", () => {
   production.app.resourceCountIs("AWS::WAFv2::WebACL", 1);
   production.app.resourceCountIs("AWS::WAFv2::WebACLAssociation", 1);
-  production.app.resourceCountIs("AWS::CloudWatch::Alarm", 9);
+  production.app.resourceCountIs("AWS::CloudWatch::Alarm", 11);
   production.app.hasResourceProperties("AWS::SNS::Subscription", { Protocol: "email", Endpoint: "ops@example.com" });
   production.app.hasResourceProperties("AWS::Budgets::Budget", { Budget: Match.objectLike({ BudgetLimit: { Amount: 250, Unit: "USD" }, TimeUnit: "MONTHLY" }) });
   production.app.hasResourceProperties("AWS::CloudFront::Distribution", { DistributionConfig: Match.objectLike({ Aliases: ["example.com"] }) });
@@ -232,6 +234,89 @@ test("switches: Redis, NAT gateway and the nightly stop", () => {
       Match.objectLike({ Schedule: "cron(30 1 * * ? *)", ScalableTargetAction: { MinCapacity: 1, MaxCapacity: 3 } }),
     ],
   });
+});
+
+test("DynamoDB: two pay-per-request tables that clean themselves up, used by the API", () => {
+  for (const env of [demo, production]) {
+    env.data.resourceCountIs("AWS::DynamoDB::Table", 2);
+    env.data.allResourcesProperties("AWS::DynamoDB::Table", {
+      BillingMode: "PAY_PER_REQUEST",
+      TimeToLiveSpecification: { AttributeName: "ttl", Enabled: true },
+    });
+    const settings = settingsOf(container(env.app, "api"));
+    assert.equal(settings.OTP_STORE, "dynamodb");
+    assert.equal(settings.RATE_LIMIT_STORE, "dynamodb");
+    assert.ok(settings.DYNAMODB_TABLE_OTP && settings.DYNAMODB_TABLE_RATE_LIMITS);
+  }
+  const without = synth({ ...resolveConfig("demo"), dynamoStores: false });
+  without.data.resourceCountIs("AWS::DynamoDB::Table", 0);
+  assert.ok(!("OTP_STORE" in settingsOf(container(without.app, "api"))));
+});
+
+test("images: uploads go to S3 and are served only through the CDN at /media", () => {
+  const [distribution] = resources(demo.app, "AWS::CloudFront::Distribution");
+  const config: Json = distribution!.Properties.DistributionConfig;
+  const media = (config.CacheBehaviors as Json[]).find((b) => b.PathPattern === "/media/*");
+  assert.ok(media, "no /media/* behaviour");
+  const origin = (config.Origins as Json[]).find((o) => o.Id === media.TargetOriginId);
+  assert.ok(origin?.S3OriginConfig, "the /media origin must be the S3 bucket");
+  assert.ok(origin.OriginAccessControlId, "the bucket must be read with origin access control");
+  demo.app.resourceCountIs("AWS::CloudFront::OriginAccessControl", 1);
+  assert.ok("MEDIA_BASE_URL" in settingsOf(container(demo.app, "api")));
+
+  // Buckets stay private, keep old versions (soft delete), and only CloudFront may read media/.
+  demo.data.allResourcesProperties("AWS::S3::Bucket", { VersioningConfiguration: { Status: "Enabled" } });
+  const statements = resources(demo.data, "AWS::S3::BucketPolicy").flatMap((p) => p.Properties.PolicyDocument.Statement as Json[]);
+  const cdn = statements.find((s) => s.Sid === "AllowCloudFrontToReadMedia");
+  assert.ok(cdn);
+  assert.equal(cdn.Action, "s3:GetObject");
+  assert.equal(cdn.Principal.Service, "cloudfront.amazonaws.com");
+  assert.ok(JSON.stringify(cdn.Resource).includes("/media/*"), "CloudFront may only read the media/ part");
+  assert.ok(!statements.some((s) => s.Effect === "Allow" && (s.Principal === "*" || s.Principal?.AWS === "*")), "no bucket is open to everyone");
+});
+
+test("messages: production sends with SES and SNS, with only the rights it needs", () => {
+  production.data.hasResourceProperties("AWS::SES::EmailIdentity", { EmailIdentity: "example.com" });
+  const settings = settingsOf(container(production.app, "api"));
+  assert.equal(settings.MESSAGING_PROVIDER, "aws");
+  assert.equal(settings.MAIL_FROM, "no-reply@example.com");
+  const statements = resources(production.app, "AWS::IAM::Policy").flatMap((p) => p.Properties.PolicyDocument.Statement as Json[]);
+  const email = statements.find((s) => s.Sid === "SendEmailFromOurAddress");
+  assert.deepEqual(email?.Condition, { StringEquals: { "ses:FromAddress": "no-reply@example.com" } });
+  const sms = statements.find((s) => s.Sid === "SendSmsToPhones");
+  assert.equal(sms?.Action, "sns:Publish");
+  assert.ok(sms.NotResource, "SMS must not be allowed to publish to topics");
+
+  // The demo sends nothing real and has no such rights.
+  demo.data.resourceCountIs("AWS::SES::EmailIdentity", 0);
+  const demoStatements = resources(demo.app, "AWS::IAM::Policy").flatMap((p) => p.Properties.PolicyDocument.Statement as Json[]);
+  assert.ok(!demoStatements.some((s) => JSON.stringify(s.Action).includes("ses:") || JSON.stringify(s.Action).includes("sns:")));
+  assert.throws(() => resolveConfig("production"), /needs mailFrom/);
+});
+
+test("backups: production has a nightly and a weekly plan for the database; the demo has none", () => {
+  production.data.resourceCountIs("AWS::Backup::BackupVault", 1);
+  const [plan] = resources(production.data, "AWS::Backup::BackupPlan");
+  const rules = plan!.Properties.BackupPlan.BackupPlanRule as Json[];
+  assert.deepEqual(rules.map((r) => [r.RuleName, r.Lifecycle.DeleteAfterDays]), [["Nightly", 35], ["Weekly", 90]]);
+  production.data.resourceCountIs("AWS::Backup::BackupSelection", 1);
+  production.data.hasResourceProperties("AWS::RDS::DBInstance", { EnableCloudwatchLogsExports: ["postgresql"], BackupRetentionPeriod: 14 });
+  demo.data.resourceCountIs("AWS::Backup::BackupPlan", 0);
+  demo.data.hasResourceProperties("AWS::RDS::DBInstance", { BackupRetentionPeriod: 1 });
+});
+
+test("logs: kept in CloudWatch, with counts for errors, audited actions and failed messages", () => {
+  for (const env of [demo, production]) {
+    env.app.resourceCountIs("AWS::Logs::LogGroup", 2);
+    const filters = resources(env.app, "AWS::Logs::MetricFilter");
+    const names = filters.map((f) => f.Properties.MetricTransformations[0].MetricName as string).sort();
+    assert.deepEqual(names, ["ApiErrors", "AuditedActions", "FailedMessages"]);
+    assert.ok(filters.some((f) => f.Properties.FilterPattern === "{ $.level >= 50 }"));
+    assert.ok(filters.some((f) => f.Properties.FilterPattern === "{ $.audit IS TRUE }"));
+    env.app.resourceCountIs("AWS::CloudWatch::Dashboard", 1);
+  }
+  demo.app.hasResourceProperties("AWS::Logs::LogGroup", { RetentionInDays: 7 });
+  production.app.hasResourceProperties("AWS::Logs::LogGroup", { RetentionInDays: 30 });
 });
 
 test("the GitHub deploy role only trusts the named repository", () => {

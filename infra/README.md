@@ -7,6 +7,7 @@ This folder is an AWS CDK app. It describes everything the site needs on AWS as 
 - [What gets built](#what-gets-built)
 - [Why it is cheap](#why-it-is-cheap)
 - [How auto scaling works](#how-auto-scaling-works)
+- [AWS integrations](#aws-integrations)
 - [What it costs](#what-it-costs)
 - [Before the first deploy](#before-the-first-deploy)
 - [Deploy the demo](#deploy-the-demo)
@@ -43,7 +44,10 @@ Load balancer         /api/* and /health  ->  API service
 | **ECR** | Stores the Docker images. `cdk deploy` builds and uploads them |
 | **RDS for PostgreSQL 17** | The database. Encrypted, backed up, and its disk grows by itself |
 | **Secrets Manager** | Holds the database password and the two API secrets. Nobody types them |
-| **S3** | Two private buckets for files (not used by the API yet, and free while empty) |
+| **S3** | Two private buckets: photos (read through CloudFront at `/media/...`) and partner documents |
+| **DynamoDB** | Sign-in codes and rate-limit counters. Billed per request |
+| **SES and SNS** | Email and SMS (only with `messagingProvider: "aws"`). Billed per message |
+| **AWS Backup** | A second, longer-kept set of database backups (production) |
 | **VPC** | The private network and the firewall rules between the parts |
 | **CloudWatch** | Logs, and alarms sent by email (when you give an address) |
 | **IAM** | Each part gets only the rights it needs |
@@ -108,6 +112,50 @@ To change a limit, edit the number and deploy again.
 
 ---
 
+## AWS integrations
+
+Each one is switched on by a setting, and the app runs without any of them on your own computer.
+
+| What | AWS service | How it works | Setting |
+|---|---|---|---|
+| **Sign-in codes (OTP)** | DynamoDB, SES, SNS | Your own sign-in stays as it is. The codes are kept in DynamoDB (only a hash, removed by itself after use) and sent by email or SMS | `dynamoStores`, `messagingProvider` |
+| **Email** | Amazon SES | One sender address for all mail. Billed per email, no monthly fee | `messagingProvider: "aws"`, `mailFrom` |
+| **SMS** | Amazon SNS | Sent as "transactional" (the class for codes). Billed per SMS | `messagingProvider: "aws"`, `sms` |
+| **Notifications** | SES / SNS | The traveller is told when a booking is requested, confirmed or cancelled; the partner about a new booking and about the decision on their application. Every message is recorded with its result | `messagingProvider` |
+| **Rate limits** | DynamoDB | The counters are shared by all API tasks, so auto scaling cannot multiply a limit | `dynamoStores` |
+| **Images and files** | S3 + CloudFront | The browser uploads straight to S3 with a one-time link. Photos are read through the CDN at `/media/...`. Documents are private and need a short-lived link | always on |
+| **Soft delete** | S3 versioning | Nothing is deleted for good. See below | always on |
+| **Backups** | RDS + AWS Backup | The database always has its own backups. AWS Backup adds a nightly and a weekly copy that are kept longer | `backups` |
+| **Logs** | CloudWatch | All container logs, plus counts of errors, audited actions and failed messages, an alarm for each, and one dashboard | `logRetentionDays`, `dashboard`, `alarmEmail` |
+
+### What goes where
+
+Only short-lived, simple data moved to DynamoDB: **sign-in codes** and **rate-limit counters**. They are read by one key, never joined to anything, and worthless after a few minutes. DynamoDB bills them per request and deletes them by itself.
+
+**Bookings, payments, partners and listings stay in PostgreSQL.** They need transactions and rules that span several tables (for example "never sell the same seat twice"). Moving them would make the app less safe and not cheaper.
+
+### Soft delete
+
+| Where | What "delete" does |
+|---|---|
+| Rows in PostgreSQL | The row is marked (`deleted_at`, `removed_at` or `is_active`) and kept. A test fails if anyone adds a real `delete` to the API code |
+| Uploaded files | The file is marked as deleted in the database and hidden. The object stays in S3 |
+| S3 buckets | Both keep old versions. A file that is removed or overwritten can be brought back for 30 days (photos) or 90 days (documents) |
+| Database | Delete protection and a final snapshot in production |
+| Who did it | Every create, change and delete is in the `audit_logs` table and as a line in CloudWatch |
+
+The one thing that does expire on purpose: used and old sign-in codes and rate-limit counters. They are not records of anything.
+
+### To do outside the code before real users
+
+AWS asks for these by hand, once:
+
+1. **SES:** a new account is in the "sandbox" and can only send to addresses you have verified. Ask for production access in the SES console (Account dashboard).
+2. **SNS SMS:** the monthly SMS spending limit starts at 1 US dollar. Ask AWS to raise it (Service Quotas).
+3. **SMS to Indian numbers:** register on a DLT portal, then put the entity id and the template id in `sms.dltEntityId` and `sms.dltOtpTemplateId`. Operators block SMS without them. The exact wording of each SMS is in `apps/api/src/modules/messaging/templates.ts`.
+
+---
+
 ## What it costs
 
 These are **rough estimates** for Mumbai with very little traffic, made from public list prices. Check them in the [AWS Pricing Calculator](https://calculator.aws/) before you rely on them. A new AWS account may also get free-tier credit.
@@ -136,6 +184,18 @@ These are **rough estimates** for Mumbai with very little traffic, made from pub
 | Logs, metrics, alarms, secrets, DNS | $10 to 20 |
 
 Each extra task that auto scaling adds costs about $6 to 10 a month on Spot, only while it runs.
+
+**The integrations add very little at low traffic**
+
+| Item | How it is billed | About |
+|---|---|---|
+| DynamoDB (codes, rate limits) | Per request, no hourly fee. One small write per API request | Under $1 a month for a million API requests |
+| S3 | Per GB stored | Cents, until there are many photos |
+| SES email | Per email | About $0.10 for 1,000 emails |
+| SNS SMS | Per SMS, price depends on the country | Check the SNS price list for India |
+| CloudWatch log counts (3 numbers) | Per custom metric | About $1 a month |
+| Dashboard | The first three are free | $0 |
+| AWS Backup (production) | Per GB of backup kept | A few dollars, grows with the database |
 
 ---
 
@@ -274,18 +334,20 @@ The domain must be in a Route 53 hosted zone in the same AWS account.
 
 The `production` environment in the settings is ready: two tasks per service in two zones, a standby database, backups for 14 days, WAF, and protection against deleting the data by accident.
 
-**But the app itself is not ready for production mode yet.** The API refuses to start as `production` (or `staging`) until two things are built in the app:
+**But the app itself is not ready for production mode yet.** The API refuses to start as `production` (or `staging`) until one more thing is built in the app: the real payment gateway. Today only the test simulator exists.
 
-- a real sender for SMS and email (today only the "console" sender exists), and
-- the real payment gateway (today only the test simulator exists).
+Email and SMS are ready: the production settings use `messagingProvider: "aws"`.
 
-Until then, `cdk deploy -c env=production` will create everything, and then the API tasks will fail to start and ECS will keep the service empty. So deploy production only after those two parts are done.
+Until payments are built, `cdk deploy -c env=production` will create everything, and then the API tasks will fail to start and ECS will keep the service empty. So deploy production only after that part is done.
 
-When they are done, also plan for:
+When it is done, also plan for:
 
-- the Razorpay keys and the SMS/email keys as new secrets in `lib/data-stack.ts`, passed to the API in `lib/app-stack.ts`,
+- the Razorpay keys as new secrets in `lib/data-stack.ts`, passed to the API in `lib/app-stack.ts`,
+- the three steps under [To do outside the code before real users](#to-do-outside-the-code-before-real-users),
 - `alarmEmail` and `monthlyBudgetUsd` in the production settings,
-- your own domain (see above).
+- your own domain (see above). Production needs a domain or a `mailFrom` address.
+
+You can already try real email and SMS in the demo: set `messagingProvider: "aws"` and `mailFrom` in the `demo` block. The demo then stops writing codes to the log and sends them for real.
 
 ---
 
@@ -319,6 +381,10 @@ Everything is in `config/environments.ts`, with a comment on each value. The mai
 | `database` | Size, standby copy, disk size and limit, backup days, delete protection |
 | `natGateways` | `0` = cheap public subnets. `1` or `2` = private subnets behind NAT |
 | `cpuArchitecture` | `X86_64` or `ARM64` |
+| `messagingProvider`, `mailFrom`, `sms` | Who sends email and SMS, the sender address, and the SMS ids for India |
+| `dynamoStores` | Keeps sign-in codes and rate-limit counters in DynamoDB |
+| `backups` | Adds the AWS Backup plan for the database (nightly and weekly) |
+| `dashboard` | Adds the CloudWatch dashboard |
 | `redis` | Adds a serverless Redis and gives the API its address |
 | `waf` | Adds the web firewall |
 | `blockedPaths` | Paths the load balancer answers with "404" |
@@ -349,7 +415,8 @@ pnpm synth
 
 - The CDK code passes the TypeScript check.
 - `cdk synth` makes valid templates for the demo and for production (with a domain, alarms, a budget and the GitHub role), with no AWS login.
-- 15 tests check the important promises: the database and buckets are private, the load balancer is internal, no rule lets the whole internet in, both services scale between their limits on CPU and requests, Spot is used as set, migrations run before the API, and secrets never appear as plain settings.
+- 20 tests check the important promises: the database and buckets are private, the load balancer is internal, no rule lets the whole internet in, both services scale between their limits on CPU and requests, Spot is used as set, migrations run before the API, and secrets never appear as plain settings. They also check the integrations: the DynamoDB tables, the CDN path for images, the narrow rights for email and SMS, the backup plan and the log counts.
+- The integrations were run on a computer against stand-ins for AWS (DynamoDB Local and S3Mock), with 37 checks: codes kept in DynamoDB and usable once, shared rate limits, uploads to S3 with one-time links, private documents, soft deletes that keep the data, and booking notifications recorded once each. Email and SMS sending was checked against a recording stand-in, not against real SES and SNS.
 - Both Docker images were built and run on a computer, wired up the way AWS will wire them:
   - a PostgreSQL with SSL switched on (as RDS has), reached with the same five `DB_*` values that ECS injects,
   - the migration job, the seed job and the demo-data job, each run from the API image,

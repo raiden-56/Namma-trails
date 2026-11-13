@@ -55,8 +55,11 @@ Legend: [x] done and verified · [~] implemented but not yet verified end to end
 - [x] DB-backed auth flows exercised by hand against the running stack: OTP request, OTP sign-up and sign-in, `/auth/me`, rate limiting (429). Automated integration tests still to write
 - [x] Reference-data seed and `admin:create` bootstrap script written
 - [x] Seed executed: 50 permissions, 6 roles, 12 categories, 15 document types, 51 requirements, 4 destinations with PostGIS points; `admin:create` verified
-- [ ] Object storage module (pre-signed uploads)
-- [ ] Redis-backed rate limiting and BullMQ
+- [x] Object storage module: `/media` endpoints with pre-signed uploads to S3, type and size checks, private documents behind short-lived links, soft delete (run against S3Mock). No upload screen in the web app yet
+- [x] Shared rate limiting without Redis: counters in DynamoDB (`RATE_LIMIT_STORE=dynamodb`), run against DynamoDB Local
+- [x] One-time codes in DynamoDB (`OTP_STORE=dynamodb`) with automatic expiry; PostgreSQL stays the local default
+- [x] Soft delete everywhere: a partner's dropped categories and towns are marked `removed_at`, not deleted; a test guards against new hard deletes
+- [ ] BullMQ / background queues
 
 ### Phase 3 — Provider self-registration & verification
 - [x] Domain rules: provider status machine, document evaluation, publish gate (unit-tested)
@@ -81,7 +84,8 @@ Legend: [x] done and verified · [~] implemented but not yet verified end to end
 - [x] Partner portal: live dashboard, listings, bookings (accept/decline/start/complete/cancel), finance (commission, net, settlements, payouts)
 - [x] Admin: bookings, finance, support tickets, listing moderation, document verification → approval
 - [x] Demo data across every feature (docs/15-demo-data.md), all fictional and flagged is_demo
-- [ ] Real payment gateway (Razorpay), document upload, listing creation by partners, notifications, ticket replies, multi-service checkout
+- [x] Messages: an AWS sender (Amazon SES for email, Amazon SNS for SMS, `MESSAGING_PROVIDER=aws`), built-in wording that a `notification_templates` row can replace, and notifications for booking requested / confirmed / cancelled and for partner application decisions, each recorded in `notifications`. Checked against a recording stand-in, not yet against real SES and SNS
+- [ ] Real payment gateway (Razorpay), document upload screens, listing creation by partners, in-app notification list, ticket replies, multi-service checkout
 
 ### Phases 4–9
 - [x] Domain engines ready ahead of time: pricing, availability strategies, booking state machine, trip status, commission, settlement, refunds (41 unit tests)

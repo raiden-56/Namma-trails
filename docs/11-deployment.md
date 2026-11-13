@@ -15,8 +15,13 @@ It follows the recommendation below, with these choices made to keep the bill lo
 | Network | Not decided | No NAT gateway: tasks in public subnets, firewall lets only the load balancer in | About US$40 a month saved per gateway. A switch turns NAT on |
 | Compute | Fargate | Fargate with auto scaling, on Fargate Spot (all tasks in the demo; all but the first in production) | About 70% off compute |
 | Migrations | A one-off ECS task per release | A first container in every API task runs `prisma migrate deploy` | No separate pipeline step; a failed migration stops the release by itself |
-| Redis, SES, WAF | Listed | Redis is a switch (off: the API does not use it yet). SES is not set up. WAF is on for production only | Pay only for what the code uses |
-| Environments | Staging and production | `demo` (API in development mode with demo data) and `production` | The API cannot start in staging or production mode until real messaging and payments are built |
+| Redis, WAF | Listed | Redis is a switch (off: the API does not use it). WAF is on for production only | Pay only for what the code uses |
+| Email and SMS | SES; MSG91 or Twilio | Amazon SES for email and Amazon SNS for SMS, switched on with `messagingProvider: "aws"` | Billed per message, no monthly fee. SMS to India still needs a DLT registration |
+| Short-lived data | Redis | DynamoDB for sign-in codes and rate-limit counters | Billed per request, shared by all tasks, cleans itself up. Bookings and payments stay in PostgreSQL |
+| Files | S3 public and private buckets | The same, with uploads through one-time links and photos served by CloudFront at `/media/...` | Files never pass through the API tasks |
+| Backups | RDS snapshots + weekly dump | RDS automatic backups, plus an AWS Backup plan (nightly and weekly) in production | A second copy that outlives the database |
+| Logs | CloudWatch | Container logs, counts of errors / audited actions / failed messages, alarms and one dashboard | Free or close to it at this size |
+| Environments | Staging and production | `demo` (API in development mode with demo data) and `production` | The API cannot start in staging or production mode until real payments are built |
 | Cost | US$350 to 700 a month | About US$50 to 55 (demo) and US$160 to 175 (production at its smallest) | Rough estimates; see the guide |
 
 ## Recommendation

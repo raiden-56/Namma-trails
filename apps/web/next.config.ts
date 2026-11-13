@@ -6,13 +6,40 @@ import type { NextConfig } from "next";
 // workspace package @kt/domain is included. Local dev and plain builds are not affected.
 const standalone = process.env.NEXT_OUTPUT === "standalone";
 
+/**
+ * Where uploaded pictures may come from. Nothing else is allowed.
+ *   - the site's own CDN path: <NEXT_PUBLIC_SITE_URL>/media/...  (on AWS, CloudFront reads it from S3)
+ *   - NEXT_PUBLIC_MEDIA_URL, when set: a local S3 stand-in, e.g. http://localhost:9090/kt-public
+ */
+function mediaPatterns() {
+  const patterns: Array<{ protocol: "http" | "https"; hostname: string; port: string; pathname: string }> = [];
+  const allow = (address: string | undefined, suffix: string) => {
+    if (!address) return;
+    try {
+      const url = new URL(address);
+      patterns.push({
+        protocol: url.protocol === "http:" ? "http" : "https",
+        hostname: url.hostname,
+        port: url.port,
+        pathname: `${url.pathname.replace(/\/$/, "")}${suffix}`,
+      });
+    } catch {
+      // Not a full address: nothing to allow.
+    }
+  };
+  allow(process.env.NEXT_PUBLIC_SITE_URL, "/media/**");
+  allow(process.env.NEXT_PUBLIC_MEDIA_URL, "/**");
+  return patterns;
+}
+
 const nextConfig: NextConfig = {
   ...(standalone ? { output: "standalone" as const, outputFileTracingRoot: path.join(process.cwd(), "../../") } : {}),
   reactStrictMode: true,
   transpilePackages: ["@kt/domain"],
   images: {
-    // No remote image hosts are allowed until licensed media storage (S3/CDN) is configured.
-    remotePatterns: [],
+    // Pictures that ship with the site need no entry. Uploaded pictures live in S3 and are
+    // only accepted from the addresses above.
+    remotePatterns: mediaPatterns(),
     formats: ["image/avif", "image/webp"],
   },
   poweredByHeader: false,

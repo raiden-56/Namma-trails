@@ -20,7 +20,45 @@ const EnvSchema = z
     REFRESH_TOKEN_TTL_DAYS: z.coerce.number().int().min(1).max(90).default(30),
     OTP_TTL_SECONDS: z.coerce.number().int().min(60).max(900).default(300),
     OTP_PEPPER: z.string().min(16),
-    MESSAGING_PROVIDER: z.enum(["console", "msg91", "twilio", "ses"]).default("console"),
+    /** console = write messages to the log (development only). aws = Amazon SES for email and Amazon SNS for SMS. */
+    MESSAGING_PROVIDER: z.enum(["console", "aws", "msg91", "twilio", "ses"]).default("console"),
+    /** Name shown in messages. */
+    BRAND_NAME: z.string().min(1).default("Namma Trails"),
+
+    // ── AWS (all optional locally; set by the CDK stacks on AWS) ──
+    AWS_REGION: z.string().default("ap-south-1"),
+    /** Sender of every email, for example "Namma Trails <no-reply@example.com>". Must be verified in Amazon SES. */
+    MAIL_FROM: z.string().optional(),
+    /** SMS sender name, where the country allows one. */
+    SMS_SENDER_ID: z.string().max(11).optional(),
+    /** India only: the DLT entity id and the DLT template id of the one-time-code SMS. */
+    SMS_DLT_ENTITY_ID: z.string().optional(),
+    SMS_DLT_TEMPLATE_ID_OTP: z.string().optional(),
+
+    /** Where one-time codes are kept. dynamodb = an Amazon DynamoDB table that removes old codes by itself. */
+    OTP_STORE: z.enum(["postgres", "dynamodb"]).default("postgres"),
+    /** Where rate-limit counters are kept. memory = inside one API process; dynamodb = shared by all API tasks. */
+    RATE_LIMIT_STORE: z.enum(["memory", "dynamodb"]).default("memory"),
+    DYNAMODB_TABLE_OTP: z.string().optional(),
+    DYNAMODB_TABLE_RATE_LIMITS: z.string().optional(),
+    /** Only for a local DynamoDB (docker compose): http://localhost:8000 */
+    DYNAMODB_ENDPOINT: z.url().optional(),
+
+    // ── File storage (Amazon S3; Adobe S3Mock locally) ──
+    /** Only for a local S3 (docker compose): http://localhost:9090. Leave out on AWS. */
+    S3_ENDPOINT: z.url().optional(),
+    S3_REGION: z.string().default("ap-south-1"),
+    /** Only with S3_ENDPOINT. On AWS the task role gives access, so no keys are stored. */
+    S3_ACCESS_KEY: z.string().optional(),
+    S3_SECRET_KEY: z.string().optional(),
+    S3_PUBLIC_BUCKET: z.string().optional(),
+    S3_PRIVATE_BUCKET: z.string().optional(),
+    /**
+     * Put in front of every uploaded public file's key (keys start with "media/"). On AWS this is the
+     * site address, so files are served by the CDN at https://<site>/media/... Locally it is the S3
+     * stand-in, for example http://localhost:9090/kt-public
+     */
+    MEDIA_BASE_URL: z.string().default(""),
     /** mock = simulated gateway for local development (refused in staging/production). */
     PAYMENT_PROVIDER: z.enum(["mock", "razorpay"]).default("mock"),
     AUTH_OTP_RATE_LIMIT_PER_MINUTE: z.coerce.number().int().min(1).max(100).default(5),
@@ -43,6 +81,15 @@ const EnvSchema = z
     }
     if (prodLike && /change-me/.test(env.JWT_ACCESS_SECRET + env.OTP_PEPPER)) {
       ctx.addIssue({ code: "custom", path: ["JWT_ACCESS_SECRET"], message: "replace the example secrets" });
+    }
+    if (env.MESSAGING_PROVIDER === "aws" && !env.MAIL_FROM) {
+      ctx.addIssue({ code: "custom", path: ["MAIL_FROM"], message: "MAIL_FROM is required with MESSAGING_PROVIDER=aws" });
+    }
+    if (env.OTP_STORE === "dynamodb" && !env.DYNAMODB_TABLE_OTP) {
+      ctx.addIssue({ code: "custom", path: ["DYNAMODB_TABLE_OTP"], message: "DYNAMODB_TABLE_OTP is required with OTP_STORE=dynamodb" });
+    }
+    if (env.RATE_LIMIT_STORE === "dynamodb" && !env.DYNAMODB_TABLE_RATE_LIMITS) {
+      ctx.addIssue({ code: "custom", path: ["DYNAMODB_TABLE_RATE_LIMITS"], message: "DYNAMODB_TABLE_RATE_LIMITS is required with RATE_LIMIT_STORE=dynamodb" });
     }
   });
 

@@ -20,5 +20,6 @@ Phase 0 deliverables for the Karnataka tourism marketplace (working brand **Namm
 | 14 | [Roadmap & progress](14-roadmap.md) | Phased plan, dependencies, testing strategy, **live progress checklist** |
 | 15 | [Demo data & test guide](15-demo-data.md) | Demo accounts for every role and end-to-end test scenarios |
 | — | [Features & user flow](FEATURES.md) | What the app does today, the flow step by step, and a screenshot of every main screen |
+| — | [Hosting on AWS](../infra/README.md) | The AWS CDK setup: what it builds, auto scaling, cost, and how to deploy |
 
 Source of truth for business rules is code, not prose: `packages/domain` (state machines, pricing, commission, refunds, availability, RBAC) and `apps/api/prisma/schema.prisma` + `apps/api/prisma/sql/constraints.sql`. These documents explain them and link to them.

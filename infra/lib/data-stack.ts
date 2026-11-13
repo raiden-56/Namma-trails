@@ -1,11 +1,18 @@
 import { Duration, RemovalPolicy, Stack, type StackProps } from "aws-cdk-lib";
+import * as backup from "aws-cdk-lib/aws-backup";
+import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
 import * as ec2 from "aws-cdk-lib/aws-ec2";
 import * as elasticache from "aws-cdk-lib/aws-elasticache";
+import * as events from "aws-cdk-lib/aws-events";
+import * as iam from "aws-cdk-lib/aws-iam";
+import * as logs from "aws-cdk-lib/aws-logs";
 import * as rds from "aws-cdk-lib/aws-rds";
+import * as route53 from "aws-cdk-lib/aws-route53";
 import * as s3 from "aws-cdk-lib/aws-s3";
 import * as secretsmanager from "aws-cdk-lib/aws-secretsmanager";
+import * as ses from "aws-cdk-lib/aws-ses";
 import type { Construct } from "constructs";
-import type { EnvironmentConfig } from "../config/environments";
+import { addressOf, mailFromOf, type EnvironmentConfig } from "../config/environments";
 import type { NetworkStack } from "./network-stack";
 
 export interface DataStackProps extends StackProps {
@@ -28,6 +35,9 @@ export class DataStack extends Stack {
   readonly publicBucket: s3.Bucket;
   /** Partner documents. Never public. */
   readonly privateBucket: s3.Bucket;
+  /** One-time codes and rate-limit counters. Set only when dynamoStores is on. */
+  readonly otpTable?: dynamodb.Table;
+  readonly rateLimitTable?: dynamodb.Table;
   /** Set only when Redis is switched on. */
   readonly redisUrl?: string;
 
@@ -59,6 +69,10 @@ export class DataStack extends Stack {
       maxAllocatedStorage: db.maxAllocatedStorageGb,
       storageEncrypted: true,
 
+      // Real data: also send the database's own log to CloudWatch, so slow queries and
+      // failed logins can be looked up later.
+      ...(protect ? { cloudwatchLogsExports: ["postgresql"], cloudwatchLogsRetention: logs.RetentionDays.ONE_MONTH } : {}),
+
       backupRetention: Duration.days(db.backupRetentionDays),
       deleteAutomatedBackups: !protect,
       deletionProtection: protect,
@@ -79,21 +93,117 @@ export class DataStack extends Stack {
     });
 
     // ── File storage ─────────────────────────────────────────────────────────
-    // The API does not store files yet. Empty buckets cost nothing, and the API already
-    // gets their names and the right to use them, so uploads work the day they are built.
+    // Uploads go straight from the browser to S3 with a one-time link the API signs, so
+    // the files never pass through (or weigh on) the API tasks. Storage is billed per GB.
+    //
+    // Soft delete: both buckets keep old versions. A file that is deleted or overwritten
+    // can be brought back until its old version expires.
     const bucketDefaults: s3.BucketProps = {
       blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
       encryption: s3.BucketEncryption.S3_MANAGED,
       enforceSSL: true,
+      versioned: true,
       removalPolicy: protect ? RemovalPolicy.RETAIN : RemovalPolicy.DESTROY,
       autoDeleteObjects: !protect,
+      // The browser may send a file with a signed link; reading goes through the CDN.
+      cors: [
+        {
+          allowedMethods: [s3.HttpMethods.PUT],
+          allowedOrigins: config.domain ? [config.domain.name, ...(config.domain.alternateNames ?? [])].map((name) => `https://${name}`) : ["*"],
+          allowedHeaders: ["*"],
+          maxAge: 3600,
+        },
+      ],
     };
-    this.publicBucket = new s3.Bucket(this, "PublicMedia", bucketDefaults);
+    const tidyUp = { abortIncompleteMultipartUploadAfter: Duration.days(7) };
+    this.publicBucket = new s3.Bucket(this, "PublicMedia", {
+      ...bucketDefaults,
+      lifecycleRules: [{ ...tidyUp, noncurrentVersionExpiration: Duration.days(30) }],
+    });
     this.privateBucket = new s3.Bucket(this, "PrivateDocuments", {
       ...bucketDefaults,
-      versioned: true,
-      lifecycleRules: [{ noncurrentVersionExpiration: Duration.days(90) }],
+      lifecycleRules: [{ ...tidyUp, noncurrentVersionExpiration: Duration.days(90) }],
     });
+    // Photos are public, but only through the CDN: CloudFront (and nobody else) may read
+    // the "media/" part of the public bucket. Written here, and not by the app stack, so
+    // the two stacks do not depend on each other in a circle.
+    this.publicBucket.addToResourcePolicy(
+      new iam.PolicyStatement({
+        sid: "AllowCloudFrontToReadMedia",
+        actions: ["s3:GetObject"],
+        resources: [this.publicBucket.arnForObjects("media/*")],
+        principals: [new iam.ServicePrincipal("cloudfront.amazonaws.com")],
+        conditions: { StringLike: { "AWS:SourceArn": `arn:${this.partition}:cloudfront::${this.account}:distribution/*` } },
+      }),
+    );
+
+    // ── DynamoDB: short-lived data ───────────────────────────────────────────
+    // One-time codes and rate-limit counters are small, read by one key, never joined to
+    // anything, and worthless after a few minutes. DynamoDB is billed per request (no
+    // hourly fee), is shared by every API task, and removes old items by itself.
+    // Bookings, payments and partners stay in PostgreSQL: they need transactions and joins.
+    if (config.dynamoStores) {
+      const shortLived = {
+        billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+        timeToLiveAttribute: "ttl",
+        // Nothing here is worth keeping, so no backups and no delete protection.
+        removalPolicy: RemovalPolicy.DESTROY,
+      };
+      this.otpTable = new dynamodb.Table(this, "OtpCodes", {
+        ...shortLived,
+        partitionKey: { name: "pk", type: dynamodb.AttributeType.STRING },
+        sortKey: { name: "sk", type: dynamodb.AttributeType.STRING },
+      });
+      this.rateLimitTable = new dynamodb.Table(this, "RateLimits", {
+        ...shortLived,
+        partitionKey: { name: "pk", type: dynamodb.AttributeType.STRING },
+      });
+    }
+
+    // ── Email sender (Amazon SES) ────────────────────────────────────────────
+    // Proves to SES that we own the sender. With a domain the DNS records are added for
+    // us; with a single address AWS emails it a confirmation link.
+    // A new SES account is in the "sandbox" and can only mail verified addresses. Ask AWS
+    // for production access before real users sign up (SES console -> Account dashboard).
+    const mailFrom = mailFromOf(config);
+    if (config.messagingProvider === "aws" && mailFrom) {
+      new ses.EmailIdentity(this, "MailIdentity", {
+        identity: config.domain
+          ? ses.Identity.publicHostedZone(
+              route53.PublicHostedZone.fromPublicHostedZoneAttributes(this, "MailZone", { hostedZoneId: config.domain.hostedZoneId, zoneName: config.domain.hostedZoneName }),
+            )
+          : ses.Identity.email(addressOf(mailFrom)),
+      });
+    }
+
+    // ── Backups ──────────────────────────────────────────────────────────────
+    // The database always has its own automatic backups (backupRetentionDays, with
+    // restore to any minute). AWS Backup adds a second, independent set that is kept
+    // longer and survives even if the database itself is deleted.
+    if (config.backups) {
+      const vault = new backup.BackupVault(this, "BackupVault", { removalPolicy: RemovalPolicy.RETAIN });
+      const plan = new backup.BackupPlan(this, "BackupPlan", {
+        backupVault: vault,
+        backupPlanRules: [
+          new backup.BackupPlanRule({
+            ruleName: "Nightly",
+            // 20:30 UTC = 02:00 in India.
+            scheduleExpression: events.Schedule.cron({ hour: "20", minute: "30" }),
+            startWindow: Duration.hours(1),
+            completionWindow: Duration.hours(4),
+            deleteAfter: Duration.days(config.backups.dailyRetentionDays),
+          }),
+          new backup.BackupPlanRule({
+            ruleName: "Weekly",
+            scheduleExpression: events.Schedule.cron({ weekDay: "SUN", hour: "21", minute: "30" }),
+            startWindow: Duration.hours(1),
+            completionWindow: Duration.hours(4),
+            deleteAfter: Duration.days(config.backups.weeklyRetentionDays),
+          }),
+        ],
+      });
+      plan.addSelection("Database", { resources: [backup.BackupResource.fromRdsDatabaseInstance(this.database)] });
+    }
 
     // ── Redis (off until the API uses it) ────────────────────────────────────
     if (config.redis && network.cacheSecurityGroup) {

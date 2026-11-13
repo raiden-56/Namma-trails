@@ -4,6 +4,9 @@ import { APP_FILTER, APP_GUARD } from "@nestjs/core";
 import { ThrottlerGuard, ThrottlerModule } from "@nestjs/throttler";
 import { LoggerModule } from "nestjs-pino";
 import { AuditService } from "./common/audit/audit.service.js";
+import { dynamoClient } from "./common/aws/clients.js";
+import { DynamoThrottlerStorage } from "./common/throttle/dynamo-throttler-storage.js";
+import { MediaModule } from "./modules/media/media.js";
 import { AuthGuard } from "./common/auth/auth.guard.js";
 import { PrincipalService } from "./common/auth/principal.service.js";
 import { AllExceptionsFilter } from "./common/errors/all-exceptions.filter.js";
@@ -46,9 +49,16 @@ class CoreModule {}
         redact: ["req.headers.authorization", "req.headers.cookie", 'res.headers["set-cookie"]', "req.body.password", "req.body.code", "req.body.otpCode"],
       },
     }),
-    ThrottlerModule.forRoot([{ name: "default", ttl: 60_000, limit: 120 }]),
+    ThrottlerModule.forRoot({
+      throttlers: [{ name: "default", ttl: 60_000, limit: 120 }],
+      // With several API tasks the counters must be shared, or every task would allow the full limit.
+      ...(env.RATE_LIMIT_STORE === "dynamodb" && env.DYNAMODB_TABLE_RATE_LIMITS
+        ? { storage: new DynamoThrottlerStorage(dynamoClient(env), env.DYNAMODB_TABLE_RATE_LIMITS) }
+        : {}),
+    }),
     AuthModule,
     MessagingModule,
+    MediaModule,
   ],
   controllers: [
     HealthController,

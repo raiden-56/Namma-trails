@@ -1,7 +1,9 @@
+import { publicMediaUrl } from "../../common/media-url.js";
 import { Inject, Injectable, Logger, type OnModuleDestroy, type OnModuleInit } from "@nestjs/common";
 import { DomainError, type ListingStatus, type Principal, istDateOf } from "@kt/domain";
 import { AuditService } from "../../common/audit/audit.service.js";
 import { PrincipalService } from "../../common/auth/principal.service.js";
+import { NotificationService } from "../messaging/notification.service.js";
 import { ApiError } from "../../common/errors/api-error.js";
 import { ENV, type Env } from "../../config/env.js";
 import { PrismaService } from "../../prisma/prisma.service.js";
@@ -22,7 +24,7 @@ type BookingRow = Prisma.BookingGetPayload<{ include: typeof BOOKING_LIST_INCLUD
 
 const coverUrl = (b: BookingRow) => {
   const m = b.service.media[0]?.media;
-  return m ? (m.bucket === "static" ? m.objectKey : `/media/${m.objectKey}`) : null;
+  return m ? publicMediaUrl(m) : null;
 };
 
 function summarise(b: BookingRow) {
@@ -59,6 +61,7 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
     private readonly prisma: PrismaService,
     private readonly principals: PrincipalService,
     private readonly audit: AuditService,
+    private readonly notifications: NotificationService,
     @Inject(ENV) private readonly env: Env,
   ) {
     if (env.PAYMENT_PROVIDER !== "mock") throw new Error(`Payment provider "${env.PAYMENT_PROVIDER}" is not implemented yet (Phase 6)`);
@@ -98,6 +101,10 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
         .create({ data: { key: idempotencyKey, userId: principal.userId, scope: "booking.create", requestHash: "-", responseCode: 201, responseBody: JSON.parse(JSON.stringify(result)) } })
         .catch(() => undefined);
     }
+    // Messages go out after the booking is saved, and are never waited for: a slow or
+    // failed message must not slow down or undo the booking.
+    if (result.status === "confirmed") void this.notifications.bookingEvent(result.bookingId, "booking_confirmed");
+    if (result.status === "awaiting_provider_confirmation") void this.notifications.bookingEvent(result.bookingId, "booking_requested");
     return result;
   }
 
@@ -143,7 +150,9 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
 
   async cancelMine(userId: string, ref: string, reason: string) {
     const b = await this.ownBooking(userId, ref);
-    return this.engine.cancel(b.id, "traveler", userId, reason);
+    const result = await this.engine.cancel(b.id, "traveler", userId, reason);
+    void this.notifications.bookingEvent(b.id, "booking_cancelled");
+    return result;
   }
 
   async review(userId: string, ref: string, input: { rating: number; title?: string; body?: string }) {
@@ -174,7 +183,19 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
       await this.engine.failPayment(paymentId, "Payment declined (simulated)");
       return { status: "failed" };
     }
-    return this.engine.confirmPayment(paymentId, `mock_pay_${p.id.replace(/-/g, "").slice(0, 16)}`);
+    const result = await this.engine.confirmPayment(paymentId, `mock_pay_${p.id.replace(/-/g, "").slice(0, 16)}`);
+    if (result.status === "captured") void this.notifyPaidBookings(paymentId);
+    return result;
+  }
+
+  /** Tells the traveller and the partner about every booking this payment confirmed. */
+  private async notifyPaidBookings(paymentId: string): Promise<void> {
+    try {
+      const paid = await this.prisma.paymentAllocation.findMany({ where: { paymentId, booking: { status: "confirmed" } }, select: { bookingId: true } });
+      for (const { bookingId } of paid) await this.notifications.bookingEvent(bookingId, "booking_confirmed");
+    } catch (error) {
+      this.logger.warn(`Could not send booking confirmations for payment ${paymentId}: ${String(error)}`);
+    }
   }
 
   /* ─────────────── partner (org-scoped) ─────────────── */
@@ -218,7 +239,7 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
         category: { select: { name: true } },
         destination: { select: { name: true } },
         pricePlans: { where: { isActive: true }, select: { model: true }, take: 1 },
-        media: { where: { isCover: true }, include: { media: true }, take: 1 },
+        media: { where: { isCover: true, media: { deletedAt: null } }, include: { media: true }, take: 1 },
         _count: { select: { bookings: true, inventoryItems: true } },
       },
     });
@@ -236,7 +257,7 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
       bookings: s._count.bookings,
       inventoryItems: s._count.inventoryItems,
       confirmationPolicy: s.confirmationPolicy,
-      coverImageUrl: s.media[0] ? (s.media[0].media.bucket === "static" ? s.media[0].media.objectKey : null) : null,
+      coverImageUrl: s.media[0] ? publicMediaUrl(s.media[0].media) : null,
     }));
   }
 
@@ -290,6 +311,7 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
       }
     })();
     await this.audit.record({ actorId: principal.userId, actorType: "provider", action: `booking.${action}`, entityType: "booking", entityId: b.id, providerId, after: { reason: reason ?? null } });
+    if (action === "reject" || action === "cancel") void this.notifications.bookingEvent(b.id, "booking_cancelled");
     return result ?? { ok: true };
   }
 

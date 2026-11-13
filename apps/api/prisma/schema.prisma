@@ -575,6 +575,8 @@ model ProviderCategory {
   reviewedBy String?        @map("reviewed_by") @db.Uuid
   reviewedAt DateTime?      @map("reviewed_at") @db.Timestamptz(3)
   createdAt  DateTime       @default(now()) @map("created_at") @db.Timestamptz(3)
+  /// Soft delete: set when the partner drops this category. The row is kept.
+  removedAt  DateTime?      @map("removed_at") @db.Timestamptz(3)
 
   provider Provider @relation(fields: [providerId], references: [id], onDelete: Cascade)
   category Category @relation(fields: [categoryId], references: [id], onDelete: Restrict)
@@ -585,8 +587,10 @@ model ProviderCategory {
 }
 
 model ProviderDestination {
-  providerId    String @map("provider_id") @db.Uuid
-  destinationId String @map("destination_id") @db.Uuid
+  providerId    String    @map("provider_id") @db.Uuid
+  destinationId String    @map("destination_id") @db.Uuid
+  /// Soft delete: set when the partner drops this town. The row is kept.
+  removedAt     DateTime? @map("removed_at") @db.Timestamptz(3)
 
   provider    Provider    @relation(fields: [providerId], references: [id], onDelete: Cascade)
   destination Destination @relation(fields: [destinationId], references: [id], onDelete: Restrict)

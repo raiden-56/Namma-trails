@@ -1,18 +1,14 @@
 import { Inject, Injectable, Logger, Module } from "@nestjs/common";
+import { sesClient, snsClient } from "../../common/aws/clients.js";
 import { ENV, type Env } from "../../config/env.js";
+import { AwsMessageSender } from "./aws-message-sender.js";
+import { MessageSender, type OutboundMessage } from "./message-sender.js";
+import { NotificationService } from "./notification.service.js";
+import { TemplateService } from "./template.service.js";
 
-export interface OutboundMessage {
-  channel: "sms" | "email";
-  to: string;
-  /** Notification template event key (e.g. "otp", "provider_application_submitted"). */
-  template: string;
-  variables: Record<string, string>;
-}
-
-/** Provider-agnostic message sender. Real providers (MSG91/Twilio SMS with DLT templates, SES email) plug in here. */
-export abstract class MessageSender {
-  abstract send(message: OutboundMessage): Promise<void>;
-}
+export { MessageSender, type OutboundMessage } from "./message-sender.js";
+export { NotificationService } from "./notification.service.js";
+export { TemplateService } from "./template.service.js";
 
 /**
  * Development-only sender: writes messages to the server log so OTPs can be
@@ -43,18 +39,29 @@ export function devOutboxEnabled(env: Env): boolean {
   return env.MESSAGING_PROVIDER === "console" && (env.NODE_ENV === "development" || env.NODE_ENV === "test");
 }
 
+/**
+ * Messages (one-time codes, booking and application notices).
+ *
+ * MESSAGING_PROVIDER picks who delivers them:
+ *   console  the server log, for development
+ *   aws      Amazon SES (email) and Amazon SNS (SMS)
+ * Any other value fails at start-up on purpose: the API must not run while silently
+ * dropping messages.
+ */
 @Module({
   providers: [
+    TemplateService,
     {
       provide: MessageSender,
-      inject: [ENV],
-      useFactory: (env: Env) => {
+      inject: [ENV, TemplateService],
+      useFactory: (env: Env, templates: TemplateService) => {
         if (env.MESSAGING_PROVIDER === "console") return new ConsoleMessageSender(env);
-        // Real providers are added in Phase 7 (notifications). Failing closed is deliberate.
+        if (env.MESSAGING_PROVIDER === "aws") return new AwsMessageSender(env, templates, sesClient(env), snsClient(env));
         throw new Error(`Messaging provider "${env.MESSAGING_PROVIDER}" is not implemented yet`);
       },
     },
+    NotificationService,
   ],
-  exports: [MessageSender],
+  exports: [MessageSender, NotificationService, TemplateService],
 })
 export class MessagingModule {}

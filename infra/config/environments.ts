@@ -76,7 +76,19 @@ export interface EnvironmentConfig {
    * refuses to start in "staging" or "production" without them.
    */
   appMode: AppMode;
-  messagingProvider: "console" | "msg91" | "twilio" | "ses";
+  /**
+   * Who delivers email and SMS (one-time codes, booking notices).
+   *   console  nothing is sent; messages go to the log. Development only.
+   *   aws      Amazon SES for email and Amazon SNS for SMS. Billed per message, no monthly fee.
+   */
+  messagingProvider: "console" | "aws";
+  /**
+   * With "aws": the sender of every email, for example "Namma Trails <no-reply@nammatrails.in>".
+   * Left out, "no-reply@<your domain>" is used. The address (or its domain) is verified in SES.
+   */
+  mailFrom?: string;
+  /** With "aws": SMS details. For Indian numbers the DLT ids are required by the operators. */
+  sms?: { senderId?: string; dltEntityId?: string; dltOtpTemplateId?: string };
   paymentProvider: "mock" | "razorpay";
   /** Lets the demo data script run. The API refuses this in production mode. */
   demoData: boolean;
@@ -103,6 +115,12 @@ export interface EnvironmentConfig {
   api: ServiceSizing;
   database: DatabaseSizing;
 
+  /**
+   * Amazon DynamoDB for one-time codes and rate-limit counters. Billed per request, so it
+   * costs almost nothing at low traffic, and all API tasks share the same counters.
+   * false = codes stay in PostgreSQL and each task counts on its own.
+   */
+  dynamoStores: boolean;
   /** Redis (ElastiCache Serverless). The API does not use Redis yet, so this is off. */
   redis: boolean;
   /** Web firewall (AWS WAF) on the load balancer. About US$9 a month plus traffic. */
@@ -115,6 +133,15 @@ export interface EnvironmentConfig {
    * Times are in UTC. India is UTC+5:30, so 17:30 UTC is 23:00 in India.
    */
   nightlyStop?: { stopAtUtc: { hour: number; minute: number }; startAtUtc: { hour: number; minute: number } };
+
+  /**
+   * AWS Backup for the database: one backup every night, kept for the given number of days,
+   * plus one a week kept longer. Left out, only the database's own short backups exist
+   * (database.backupRetentionDays), which is enough for a demo.
+   */
+  backups?: { dailyRetentionDays: number; weeklyRetentionDays: number };
+  /** One CloudWatch dashboard with the main numbers. The first three in an account are free. */
+  dashboard: boolean;
 
   /** Alarms and budget warnings are emailed here. Leave out for no emails. */
   alarmEmail?: string;
@@ -144,12 +171,14 @@ const demo: EnvironmentConfig = {
   api: { cpu: 256, memoryMiB: 512, minTasks: 1, maxTasks: 3, onDemandBase: 0, spot: true, targetCpuPercent: 65, targetRequestsPerTaskPerMinute: 600 },
   database: { size: "MICRO", multiAz: false, allocatedStorageGb: 20, maxAllocatedStorageGb: 50, backupRetentionDays: 1, protectData: false },
 
+  dynamoStores: true,
   redis: false,
   waf: false,
   // In development mode the API has two helper pages that must not be public:
   // the page that shows one-time codes, and the API docs.
   blockedPaths: ["/api/v1/dev/*", "/api/docs", "/api/docs/*", "/api/docs-json"],
 
+  dashboard: true,
   logRetentionDays: 7,
   containerInsights: false,
 };
@@ -161,7 +190,7 @@ const production: EnvironmentConfig = {
 
   // The API will only start in this mode once real messaging and payments are built.
   appMode: "production",
-  messagingProvider: "ses",
+  messagingProvider: "aws",
   paymentProvider: "razorpay",
   demoData: false,
 
@@ -174,9 +203,14 @@ const production: EnvironmentConfig = {
   api: { cpu: 512, memoryMiB: 1024, minTasks: 2, maxTasks: 8, onDemandBase: 1, spot: true, targetCpuPercent: 60, targetRequestsPerTaskPerMinute: 1000 },
   database: { size: "SMALL", multiAz: true, allocatedStorageGb: 30, maxAllocatedStorageGb: 200, backupRetentionDays: 14, protectData: true },
 
+  dynamoStores: true,
   redis: false,
   waf: true,
   blockedPaths: [],
+
+  // Every night, kept 35 days; every week, kept 90 days.
+  backups: { dailyRetentionDays: 35, weeklyRetentionDays: 90 },
+  dashboard: true,
 
   logRetentionDays: 30,
   containerInsights: true,
@@ -187,6 +221,7 @@ export const environments: Record<string, EnvironmentConfig> = { demo, productio
 /** Values that may be passed on the command line with `-c name=value`, so the file need not be edited. */
 export interface ConfigOverrides {
   siteUrl?: string;
+  mailFrom?: string;
   alarmEmail?: string;
   monthlyBudgetUsd?: string;
   domainName?: string;
@@ -201,6 +236,7 @@ export function resolveConfig(name: string, overrides: ConfigOverrides = {}): En
 
   if (overrides.siteUrl) config.siteUrl = overrides.siteUrl.replace(/\/$/, "");
   if (overrides.alarmEmail) config.alarmEmail = overrides.alarmEmail;
+  if (overrides.mailFrom) config.mailFrom = overrides.mailFrom;
   if (overrides.monthlyBudgetUsd) config.monthlyBudgetUsd = Number(overrides.monthlyBudgetUsd);
   if (overrides.domainName) {
     if (!overrides.hostedZoneId) throw new Error("domainName also needs hostedZoneId (the Route 53 hosted zone of the domain).");
@@ -228,6 +264,12 @@ function validate(config: EnvironmentConfig): void {
   if (config.siteUrl && !/^https:\/\/[^/]+$/.test(config.siteUrl)) problems.push(`siteUrl must look like "https://d1234abcd.cloudfront.net" (no path).`);
   if (config.monthlyBudgetUsd !== undefined && !(config.monthlyBudgetUsd > 0)) problems.push("monthlyBudgetUsd must be a number above 0.");
   if (config.appMode === "production" && config.demoData) problems.push("demoData must be false in production mode (the API refuses to start otherwise).");
+  if (config.messagingProvider === "aws" && !mailFromOf(config)) {
+    problems.push(`messagingProvider "aws" needs mailFrom (or a domain, then no-reply@<domain> is used).`);
+  }
+  if (config.backups && (config.backups.dailyRetentionDays < 1 || config.backups.weeklyRetentionDays < config.backups.dailyRetentionDays)) {
+    problems.push("backups: weeklyRetentionDays must be at least dailyRetentionDays, and both at least 1.");
+  }
   if (config.appMode !== "development" && (config.messagingProvider === "console" || config.paymentProvider === "mock")) {
     problems.push(`appMode "${config.appMode}" needs a real messagingProvider and paymentProvider (the API refuses to start otherwise).`);
   }
@@ -237,4 +279,14 @@ function validate(config: EnvironmentConfig): void {
 /** The public address of the site, as plain text known before deploying. */
 export function knownSiteUrl(config: EnvironmentConfig): string | undefined {
   return config.domain ? `https://${config.domain.name}` : config.siteUrl;
+}
+
+/** The sender of every email: the configured one, or no-reply@<domain>. */
+export function mailFromOf(config: EnvironmentConfig): string | undefined {
+  return config.mailFrom ?? (config.domain ? `no-reply@${config.domain.name}` : undefined);
+}
+
+/** "Namma Trails <a@b.c>" -> "a@b.c" */
+export function addressOf(mailFrom: string): string {
+  return (/<([^>]+)>/.exec(mailFrom)?.[1] ?? mailFrom).trim();
 }

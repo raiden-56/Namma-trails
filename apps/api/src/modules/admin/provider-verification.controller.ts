@@ -1,3 +1,4 @@
+import { NotificationService } from "../messaging/notification.service.js";
 import { Body, Controller, Get, HttpStatus, Injectable, Param, ParseUUIDPipe, Post, Query } from "@nestjs/common";
 import { ApiBearerAuth, ApiTags } from "@nestjs/swagger";
 import { PROVIDER_STATUSES, type Principal, assertProviderTransition, paginationSchema, providerNextStatuses } from "@kt/domain";
@@ -42,6 +43,7 @@ export class ProviderVerificationService {
     private readonly prisma: PrismaService,
     private readonly onboarding: ProviderOnboardingService,
     private readonly audit: AuditService,
+    private readonly notifications: NotificationService,
   ) {}
 
   async list(query: z.infer<typeof listQuery>) {
@@ -64,7 +66,7 @@ export class ProviderVerificationService {
           submittedAt: true,
           createdAt: true,
           isDemo: true,
-          categories: { select: { status: true, category: { select: { key: true } } } },
+          categories: { where: { removedAt: null }, select: { status: true, category: { select: { key: true } } } },
           _count: { select: { documents: { where: { status: "pending" } } } },
         },
       }),
@@ -81,8 +83,8 @@ export class ProviderVerificationService {
       where: { id: providerId },
       include: {
         members: { where: { role: "owner", status: "active" }, include: { user: { select: { email: true, phone: true, profile: { select: { fullName: true } } } } } },
-        categories: { include: { category: { select: { key: true, name: true } } } },
-        destinations: { include: { destination: { select: { slug: true, name: true, status: true } } } },
+        categories: { where: { removedAt: null }, include: { category: { select: { key: true, name: true } } } },
+        destinations: { where: { removedAt: null }, include: { destination: { select: { slug: true, name: true, status: true } } } },
         documents: { where: { status: { not: "superseded" } }, include: { documentType: { select: { key: true, label: true } } }, orderBy: { createdAt: "desc" } },
         verificationEvents: { orderBy: { createdAt: "desc" }, include: { actor: { select: { profile: { select: { fullName: true } }, email: true } } } },
       },
@@ -167,7 +169,7 @@ export class ProviderVerificationService {
       });
       if (count !== 1) throw ApiError.conflict("STALE_STATUS", "The application changed. Refresh and try again.");
       if (input.decision === "approve") {
-        await tx.providerCategory.updateMany({ where: { providerId, status: "pending" }, data: { status: "approved", reviewedBy: principal.userId, reviewedAt: now } });
+        await tx.providerCategory.updateMany({ where: { providerId, status: "pending", removedAt: null }, data: { status: "approved", reviewedBy: principal.userId, reviewedAt: now } });
       }
       await tx.providerVerificationEvent.create({
         data: { providerId, actorId: principal.userId, event: rule.event, fromStatus: provider.status, toStatus: to, message: input.message ?? null, internalNote: input.internalNote ?? null },
@@ -177,7 +179,8 @@ export class ProviderVerificationService {
         tx,
       );
     });
-    // Notification to the provider is queued here in Phase 7 (notifications module).
+    // Tell the partner. Not waited for: a failed email must not undo the decision.
+    void this.notifications.providerDecision(providerId, to.replace(/_/g, " "));
     return { id: providerId, status: to };
   }
 }
