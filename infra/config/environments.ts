@@ -175,8 +175,9 @@ const demo: EnvironmentConfig = {
   redis: false,
   waf: false,
   // In development mode the API has two helper pages that must not be public:
-  // the page that shows one-time codes, and the API docs.
-  blockedPaths: ["/api/v1/dev/*", "/api/docs", "/api/docs/*", "/api/docs-json"],
+  // the page that shows one-time codes, and the API docs. The test-payment step
+  // (/api/v1/dev/payments) stays open: the checkout page calls it, and it needs a sign-in.
+  blockedPaths: ["/api/v1/dev/outbox", "/api/v1/dev/outbox/*", "/api/docs", "/api/docs/*", "/api/docs-json"],
 
   dashboard: true,
   logRetentionDays: 7,

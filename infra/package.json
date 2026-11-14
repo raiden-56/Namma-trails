@@ -19,6 +19,7 @@
     "stage:status": "node scripts/stage.mjs status",
     "stage:restart": "node scripts/stage.mjs restart",
     "stage:logs": "node scripts/stage.mjs logs",
+    "stage:codes": "node scripts/stage.mjs codes",
     "stage:shell": "node scripts/stage.mjs shell"
   },
   "devDependencies": {

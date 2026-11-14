@@ -34,7 +34,7 @@ export interface StageConfig {
   /**
    * Paths that answer "404" instead of reaching the API. In development mode the API
    * has two helper pages that should not be open to everyone: the page that shows
-   * one-time codes, and the API docs. Use [] if you need them while testing.
+   * one-time codes, and the API docs. Read the codes with `pnpm stage:codes` instead.
    */
   blockedPaths: string[];
   /** Emails you when the month's AWS bill passes 80% of monthlyBudgetUsd. */
@@ -53,7 +53,9 @@ export const stage: StageConfig = {
   siteUrl: "https://d2ppxhqgzoul0v.cloudfront.net",
   demoData: true,
   autoStopAtUtc: { hour: 18, minute: 30 },
-  blockedPaths: ["/api/v1/dev", "/api/docs", "/api/docs-json"],
+  // Only the page that lists one-time codes, and the API docs. The test-payment step
+  // (/api/v1/dev/payments) must stay open: the checkout page calls it, and it needs a sign-in.
+  blockedPaths: ["/api/v1/dev/outbox", "/api/docs", "/api/docs-json"],
 };
 
 export interface StageOverrides {

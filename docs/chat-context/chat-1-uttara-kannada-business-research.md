@@ -151,7 +151,7 @@ Example with assumed numbers (not researched figures): 1,000 orders a month at â
 
 **What was asked:** in `C:\practise-folder\all-in-one`, analyse the repo, change the landing page to a stunning UI, show the flow and all the features with screenshots, and create a Markdown file with the screenshots.
 
-**What happened:** this was real project work, so it was started as its own chat: "Redesign all-in-one landing page and document features". Everything done there is in `chat-2-namma-trails-app-work.md`.
+**What happened:** this was real project work, so it was started as its own chat: "Redesign all-in-one landing page and document features". Everything done there is in `chat-2-namma-trails-app-work.md`. That chat went on to set up AWS hosting, and a test ("stage") copy of the app is now live on AWS.
 
 ---
 

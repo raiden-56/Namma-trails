@@ -122,6 +122,7 @@ Run these in the `infra` folder:
 | `pnpm stage:status` | Says if it is running, and its address |
 | `pnpm stage:restart` | Stop and start. Needed after `cdk deploy` to run the new version |
 | `pnpm stage:logs` | Shows what the server printed while starting the app |
+| `pnpm stage:codes` | Shows the newest one-time codes (stage sends no real email or SMS) |
 | `pnpm stage:shell` | Prints the command that opens a shell on the server |
 
 **It also stops by itself every night** at midnight India time (`autoStopAtUtc` in `config/stage.ts`), so a forgotten server cannot run up a bill.
@@ -138,8 +139,26 @@ pnpm exec cdk destroy NammaTrails-Stage -c env=stage
 - **A new version:** `cdk deploy`, then `pnpm stage:restart`. The server downloads the new images when it starts, and applies database changes first.
 - **The address never changes**, because of the fixed address behind CloudFront.
 - **Nobody can connect to the server directly.** Only CloudFront reaches the two app ports. There is no SSH; a shell goes through AWS Session Manager.
-- **It runs in development mode**, like the demo: test payments, and messages (sign-in codes too) go to the log, not to phones. Read them with `pnpm stage:logs`, or on the server with `docker logs api`.
-- **Two helper pages are hidden** (the page that shows one-time codes, and the API docs). To use them while testing, set `blockedPaths: []` in `config/stage.ts`.
+- **It runs in development mode**, like the demo: payments are test payments, and no real email or SMS is sent.
+- **One-time codes** (sign-up, sign-in, new password) are kept by the API instead of being sent. Read them with `pnpm stage:codes`. See [Getting a one-time code](#getting-a-one-time-code).
+- **Two helper pages are hidden** from outside (the page that lists one-time codes, and the API docs). `pnpm stage:codes` reads the list on the server itself, so it needs your AWS login.
+
+### Getting a one-time code
+
+When you sign up or sign in with a phone number or email on stage, no message arrives. Do this:
+
+1. On the site, ask for the code as usual.
+2. Run this (in the `infra` folder, or in CloudShell in `~/namma/infra` with `node scripts/stage.mjs codes`):
+
+   ```bash
+   pnpm stage:codes
+   ```
+
+3. It prints the newest messages first. Type the code from the top line into the site.
+
+To see only one person's messages, add the phone number or email: `node scripts/stage.mjs codes +919876543210`.
+
+The list is kept in memory: it is empty again after the server restarts, and a code is only valid for a few minutes.
 - **It is for testing only.** One server, no standby, no managed backups. Do not put real customer data on it.
 - **To spend even less while it runs**, try `instanceType: "t3.micro"` (1 GB memory). The three containers use about 260 MB when idle, so it may fit, but this size was not tried.
 
@@ -409,7 +428,7 @@ aws logs tail <ApiLogGroup> --follow --region ap-south-1
 
 To make a real admin instead, copy `tasks/create-admin.example.json` to `tasks/create-admin.json`, put in your name, phone and email, and run it the same way. The new password is printed once in the API log.
 
-> In the demo, two helper pages of the API are blocked at the load balancer: the page that shows one-time codes and the API docs. That is why signing **up** with a phone code does not work in the hosted demo. Signing **in** with a demo account does.
+> In the demo, two helper pages of the API are blocked at the load balancer: the page that shows one-time codes and the API docs. That is why signing **up** with a phone code does not work in the hosted demo. Signing **in** with a demo account does. The test-payment step at checkout stays open.
 
 ---
 

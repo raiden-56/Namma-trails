@@ -5,11 +5,12 @@ This file sums up the second chat, so a new chat (or another person) can carry o
 | | |
 |---|---|
 | Chat title | Redesign all-in-one landing page and document features |
-| Date | 12 November 2026 |
+| Dates | 12 and 13 November 2026 |
 | Project folder | `C:\practise-folder\all-in-one` |
+| GitHub | `https://github.com/raiden-56/Namma-trails` (public), branch `master` |
 | Started from | Chat 1, "Tourism revenue opportunities in Uttara Kannada" (see `chat-1-uttara-kannada-business-research.md`) |
-| What it was for | Redesign the landing page, document the app with screenshots, then a run of follow-up changes |
-| State now | All requested work is done and checked in a browser. **Nothing is committed.** |
+| What it was for | Redesign the landing page, document the app with screenshots, then a run of follow-up changes. Later: AWS hosting with CDK, AWS services in the app, and a cheap "stage" environment |
+| State now | All requested work is done. The **stage** environment is live on AWS: <https://d2ppxhqgzoul0v.cloudfront.net>. The user has committed and pushed the work |
 
 ---
 
@@ -23,6 +24,7 @@ This file sums up the second chat, so a new chat (or another person) can carry o
 | API | `apps/api` | NestJS 12, Prisma 7, PostgreSQL |
 | Shared rules | `packages/domain` | TypeScript |
 | Docs | `docs/` | Markdown. `docs/FEATURES.md` is the user manual |
+| AWS setup | `infra/` | AWS CDK (TypeScript). Its own pnpm project, with its own lockfile. Guide: `infra/README.md` |
 
 It is a pnpm monorepo (pnpm 11, Node 24). The web app runs on port 3000 and the API on port 4000. How to run it is in section 10 of `docs/FEATURES.md` and in the root `README.md`.
 
@@ -32,9 +34,11 @@ It is a pnpm monorepo (pnpm 11, Node 24). The web app runs on port 3000 and the 
 
 - Write in **plain, simple English**: short sentences, simple words. This goes for replies and for docs.
 - When something is unclear, ask **one** clear question with a few options.
-- **Do not commit or push unless asked.** Committing was offered twice and the answer was "Not now" both times. Do not offer it again unprompted.
+- **Do not commit or push unless asked.** Committing was offered several times and the answer was "Not now" each time. The user commits and pushes by themselves. Do not offer it again unprompted.
 - Running the end-to-end tests was offered once and the answer was "Not now".
-- The work is on the branch `master`, which has no commits yet. Do not switch branches, stash or reset.
+- The work is on the branch `master`. Do not switch branches, stash or reset.
+- **Never write the demo password in a reply.** It is in `docs/15-demo-data.md`.
+- **Never type or handle the user's AWS passwords, access keys or tokens.** The user signs in by themselves. For AWS work the user chose **CloudShell in Chrome** (the terminal inside the AWS website).
 
 ---
 
@@ -120,6 +124,87 @@ A round arrow button in the bottom right corner. It shows after scrolling down, 
 
 - The user asked to stop the web app and API once. Later someone started them again, and they were left running.
 - All screenshots were retaken several times as the pages changed.
+- The user asked for these chat context files. They were written, and later updated with the AWS work (this version).
+
+### 4.10 Host the app on AWS with CDK
+
+The user asked to host the app on AWS, at low cost, with AWS CDK and auto scaling. It was built as code in `infra/`. **The demo and production environments were never deployed** (the user said "Not now").
+
+```
+visitor -> CloudFront -> load balancer (private) -> web (port 3000)
+                                                 -> API (port 4000) -> PostgreSQL (RDS)
+```
+
+- One address for everything: `/api/*` and `/health*` go to the API, the rest goes to the website.
+- The web and API run as containers on ECS Fargate. They scale by themselves on CPU use and on the number of requests.
+- Cost choices: no NAT gateway, Fargate Spot, one small database, extras switched off in demo.
+- Rough cost: demo about US$50 to 55 a month, production about US$160 to 175 at the smallest size.
+- Settings for each environment are in `infra/config/environments.ts` (`demo`, `production`).
+- Two Docker images were written: `apps/api/Dockerfile` and `apps/web/Dockerfile`.
+- Two GitHub workflows: `.github/workflows/infra.yml` (checks) and `deploy.yml` (runs only when someone presses the button).
+
+**Blocker for real production:** the API refuses to start in production mode while payments are a mock. So today only demo and stage can run, in development mode.
+
+### 4.11 AWS services inside the app
+
+The user asked for AWS services for one-time codes, sign-in, email, notifications, backups, logs, DynamoDB "where required", images in S3 behind the CDN, and soft delete everywhere. All of it is switched on by settings, so the local setup did not change.
+
+| What | How |
+|---|---|
+| Email and SMS | Amazon SES and SNS. Set `MESSAGING_PROVIDER=aws`. Code in `apps/api/src/modules/messaging/` |
+| Sign-in | The app's own sign-in stays. AWS only delivers the codes |
+| One-time codes and rate limits | Can be stored in DynamoDB (`OTP_STORE`, `RATE_LIMIT_STORE`). Bookings, payments and users stay in PostgreSQL |
+| Images | Uploaded straight to S3 and shown through CloudFront under `/media/`. API routes are in `docs/07-api.md` (Media). There is no upload screen in the website yet |
+| Soft delete | Nothing is deleted for good. Rows get a "removed" date. A test fails if the API code ever uses a real delete |
+| Backups | An AWS Backup plan in the CDK code |
+| Logs | CloudWatch logs, a few alarms and a dashboard. Every audited action is also written as one log line |
+
+A database change was added (`prisma/migrations/20261113000000_soft_delete_provider_scope`). It is applied to the local database.
+
+### 4.12 The "stage" environment
+
+The user asked for one more environment, only for testing, almost free, that can be switched on and off. It is one stack, `NammaTrails-Stage`.
+
+- **One small server** (`t3.small`) runs the database, the API and the website as three containers. CloudFront sits in front for HTTPS.
+- No load balancer, no managed database, no NAT gateway, no extras.
+- The server stops by itself every night at 18:30 UTC (midnight in India).
+- Cost: about US$5 a month when stopped, plus 2 to 3 US cents an hour when running. `cdk destroy` brings it to zero.
+- The demo data loads by itself on the first start. The data stays when the server is stopped.
+- The helper pages (the list of one-time codes, the API docs) answer "404" from outside. The test-payment step at checkout stays open.
+- **One-time codes:** stage sends no real email or SMS. The API keeps the messages. Read them with `node scripts/stage.mjs codes` (in CloudShell, in `~/namma/infra`) or `pnpm stage:codes`. The newest is on top, and a code is valid for 5 minutes.
+
+Files: `infra/config/stage.ts` (settings), `infra/lib/stage-stack.ts`, `infra/stage/boot.sh` (runs on the server at every start), `infra/scripts/stage.mjs` (start, stop, status, restart, logs).
+
+### 4.13 Stage was deployed to AWS
+
+The user asked to host the app in stage, using the AWS login in their Chrome. It was done on 13 November 2026.
+
+| | |
+|---|---|
+| Address | <https://d2ppxhqgzoul0v.cloudfront.net> |
+| Region | Sydney (`ap-southeast-2`). The account's plan allows only this region. Mumbai was refused |
+| Stack | `NammaTrails-Stage` |
+| Server name in EC2 | `NammaTrails-Stage/Server` |
+| Deployed from | AWS CloudShell in Chrome. The project copy there is in `~/namma` |
+
+How it went: deploy once (the site address is not known yet), put the address into `infra/config/stage.ts` as `siteUrl`, deploy again, restart the server.
+
+**Start and stop.** This computer has no AWS CLI login, so `pnpm stage:start` and `pnpm stage:stop` do not work here yet. Use one of these:
+
+- In CloudShell (Sydney region): `cd ~/namma/infra && node scripts/stage.mjs start` (or `stop`, `status`, `restart`, `logs`, `codes`).
+- In the AWS website: **EC2 > Instances**, pick the server, then **Instance state > Start / Stop**.
+
+**To put a new version on stage** (in CloudShell):
+
+1. Bring the new code into `~/namma` (`git pull`).
+2. Free the disk: `docker system prune -af --volumes` and `docker builder prune -af`.
+3. In `~/namma/infra`: `npx cdk deploy NammaTrails-Stage -c env=stage --require-approval never`.
+4. `node scripts/stage.mjs restart`.
+
+Good to know about CloudShell:
+- It has Node 20. pnpm 11 needs Node 22, so the packages in `infra` were installed with `npm install --no-package-lock`.
+- Its disk is small (about 16 GB). Building both images in one go filled it once. Clearing Docker before each deploy fixes that.
+- Start long commands with `nohup ... &` and read the log file, because the browser tab can lose its connection.
 
 ---
 
@@ -131,6 +216,10 @@ A round arrow button in the bottom right corner. It shows after scrolling down, 
 | `docs/09-routes.md` | Rows for `/`, `/blog`, `/user-manual`, site map and icon |
 | `docs/08-design-system.md` | Component list updated (Select, DatePicker, Popover, BackToTop) |
 | `docs/14-roadmap.md`, `docs/README.md` | Small updates to match what is built |
+| `README.md` (root) | Rewritten: status, what is in the app, layout, pages, checks, Docker images, how to deploy to AWS |
+| `infra/README.md` | Written new. The full AWS guide: the three environments, stage, costs, first deploy, daily tasks, AWS services |
+| `docs/11-deployment.md` | Points to the CDK setup and the three environments |
+| `docs/07-api.md` | New "Media" part (upload routes) |
 
 ---
 
@@ -141,9 +230,15 @@ A round arrow button in the bottom right corner. It shows after scrolling down, 
 - The pages were opened in Edge at desktop (1440 wide) and phone (390 wide) sizes: no sideways scroll, no console errors.
 - 50 scripted checks on the dropdown, calendar and back-to-top button pass (mouse, keyboard, touch).
 - The manual has 59 links and pictures, and all of them resolve. There are 56 screenshots.
+- Tests pass: API 32, shared rules 41, AWS setup (`infra`) 28. `cdk synth` works for stage, demo and production.
+- Both Docker images build and run. The production build of the website (`next build`) passes inside the web image.
+- The AWS services were tried on this computer against stand-ins (a throwaway PostgreSQL, DynamoDB Local, S3Mock): 37 checks pass.
+- **Stage on real AWS:** the health check says "ready" and the database is up, the home page and the search page open, search shows 12 demo listings, the helper pages answer "404", and stop and start work.
 
 **Not done**
-- The production build (`next build`) was never run.
+- Signing in on the live stage site was not tried.
+- The nightly auto-stop of stage had not run yet when this was written.
+- Demo and production were never deployed. Real email (SES), SMS (SNS), DynamoDB, S3 uploads and backups were never tried on real AWS. Stage does not use them: it prints messages to its log.
 - The end-to-end tests (`apps/web/e2e/`) were updated for the new controls but **not run**. They add test users to the local database.
 - The business type dropdown in partner sign-up was not clicked through in a browser, because reaching that step creates an account.
 - Listings do not yet show price and rating inside search engine results.
@@ -161,13 +256,23 @@ A round arrow button in the bottom right corner. It shows after scrolling down, 
 - The Udupi common-questions text in `apps/web/src/content/destinations.ts` still says several services can go in one trip. That is not built.
 - The account, saved and map pages are placeholders.
 
+AWS:
+
+- **Stop the stage server when you are not testing.** The GitHub repo is public and it holds the demo password, so anyone who finds the stage address can sign in to the demo accounts, the demo admin too. It is only demo data.
+- Real payments are not built. Until they are, production cannot start (see 4.10).
+- There is no screen in the website to upload images. Only the API routes exist.
+- `.github/workflows/deploy.yml` still names the Mumbai region (`ap-south-1`), and the GitHub deploy role has not been created. Deploying from GitHub is not set up yet.
+- To use `pnpm stage:start` and `pnpm stage:stop` on this computer, install the AWS CLI and sign in.
+- If the account later allows Mumbai, change `region` and `availabilityZone` in `infra/config/stage.ts`. That makes a new server with a new address, so the two-step deploy must be done again.
+- For email and SMS on AWS: the sender address must be verified in SES, and SMS in India needs DLT registration.
+
 ---
 
 ## 8. Git state
 
-- Branch `master`, no commits yet.
-- All files were staged (`git add`) at some point by someone else. The later edits from this chat sit on top as unstaged changes.
-- This folder (`docs/chat-context/`) is new and not staged.
+- Branch `master`, pushed to GitHub (`raiden-56/Namma-trails`). The local branch and GitHub were the same on 13 November 2026.
+- All commits were made by the user: `initial commit`, `new changes`, `feat(messaging): ...`, `new changes`. The last one holds the stage environment and the live site address.
+- This chat never committed or pushed anything.
 
 ---
 
@@ -178,6 +283,9 @@ A round arrow button in the bottom right corner. It shows after scrolling down, 
 - Two things the script depends on:
   - It starts the Edge browser (`channel: "msedge"`), because Playwright's own Chromium does not match on this computer.
   - It opens the site at the address in `NEXT_PUBLIC_SITE_URL`, not `localhost`. With `localhost` the signed-in session is lost after a page reload.
+- The local database, cache and mail catcher run in Docker. If they are not running: `pnpm db:up`, then `pnpm --filter @kt/api exec prisma migrate deploy`.
+- Checks for the AWS setup, run in `infra`: `pnpm typecheck`, `pnpm test`, `pnpm exec cdk synth -c env=stage`.
+- Docker builds on this computer: the company network inspects HTTPS, so the build needs the company root certificate (`docker build --secret id=extra_ca,src=<file>`). Without it the website build cannot fetch its fonts. CloudShell does not have this problem.
 
 ---
 

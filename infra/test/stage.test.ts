@@ -5,6 +5,7 @@ import path from "node:path";
 import { test } from "node:test";
 import { App } from "aws-cdk-lib";
 import { Match, Template } from "aws-cdk-lib/assertions";
+import { environments } from "../config/environments";
 import { resolveStageConfig, type StageConfig } from "../config/stage";
 import { StageStack } from "../lib/stage-stack";
 
@@ -79,8 +80,12 @@ test("CloudFront sends /api and /health to the API port and everything else to t
   // The helper pages of the API are answered with 404 at the edge.
   assert.equal(behaviour("/api/*")?.FunctionAssociations?.[0]?.EventType, "viewer-request");
   const [fn] = resources(stage, "AWS::CloudFront::Function");
-  assert.match(fn!.Properties.FunctionCode, /\/api\/v1\/dev/);
+  assert.match(fn!.Properties.FunctionCode, /\/api\/v1\/dev\/outbox/);
   assert.match(fn!.Properties.FunctionCode, /statusCode: 404/);
+  // The checkout page calls /api/v1/dev/payments to finish a test payment: it must stay open.
+  for (const blockedPath of [...resolveStageConfig().blockedPaths, ...(environments.demo?.blockedPaths ?? [])]) {
+    assert.ok(!"/api/v1/dev/payments/some-id/complete".startsWith(blockedPath.replace(/\/?\*$/, "") + "/"), blockedPath);
+  }
 
   const open = synth({ ...resolveStageConfig(), blockedPaths: [] });
   open.resourceCountIs("AWS::CloudFront::Function", 0);

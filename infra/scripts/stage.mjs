@@ -6,10 +6,18 @@
 //   pnpm stage:status    is it running, and what is its address
 //   pnpm stage:restart   stop and start: needed after `cdk deploy` to run the new version
 //   pnpm stage:logs      what the server printed while starting the app
+//   pnpm stage:codes     the newest messages the app "sent" (one-time codes for sign-up and sign-in)
 //   pnpm stage:shell     prints the command that opens a shell on the server
+//
+// Stage sends no real email or SMS: the API keeps each message, and `codes` reads them.
+// To see only one person's messages, add the phone number or email:
+//   node scripts/stage.mjs codes +919876543210
 //
 // It uses the AWS CLI with your own login, and reads the server's id from the stack.
 import { execFileSync } from "node:child_process";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 const STACK = "NammaTrails-Stage";
 // The region of the stage environment (infra/config/stage.ts).
@@ -79,6 +87,48 @@ async function waitForSite() {
   return false;
 }
 
+/** Runs shell commands on the server through Systems Manager and returns what they printed. */
+async function runOnServer(commands) {
+  if (state() !== "running") fail("The server is stopped. Start it first: pnpm stage:start");
+  // The request goes through a file, so quotes in the commands survive every shell.
+  const folder = mkdtempSync(join(tmpdir(), "namma-stage-"));
+  const file = join(folder, "command.json");
+  try {
+    writeFileSync(file, JSON.stringify({ InstanceIds: [id], DocumentName: "AWS-RunShellScript", Parameters: { commands } }));
+    const sent = JSON.parse(aws(["ssm", "send-command", "--cli-input-json", `file://${file}`]));
+    for (let i = 0; i < 30; i++) {
+      await sleep(2000);
+      const result = JSON.parse(aws(["ssm", "get-command-invocation", "--command-id", sent.Command.CommandId, "--instance-id", id]));
+      if (result.Status === "Pending" || result.Status === "InProgress" || result.Status === "Delayed") continue;
+      return result.StandardOutputContent || result.StandardErrorContent || `(${result.Status})`;
+    }
+    fail("The server did not answer in time. Try again.");
+  } finally {
+    rmSync(folder, { recursive: true, force: true });
+  }
+}
+
+async function codes(onlyTo) {
+  // The API keeps the last messages in memory (they are gone after a restart). Its list
+  // is closed from outside, so it is read on the server itself.
+  const printed = await runOnServer([
+    `curl -s http://localhost:4000/api/v1/dev/outbox | python3 -c "import sys,json; print(json.dumps(json.load(sys.stdin)['data'][:40]))"`,
+  ]);
+  let messages;
+  try {
+    messages = JSON.parse(printed);
+  } catch {
+    fail(`Could not read the messages. The server said:\n${printed}`);
+  }
+  if (onlyTo) messages = messages.filter((m) => m.to === onlyTo);
+  if (messages.length === 0) return console.log(onlyTo ? `No messages for ${onlyTo} yet.` : "No messages yet. Ask for a code on the site first.");
+  console.log("Newest first. Times are UTC (India is 5:30 ahead).\n");
+  for (const m of messages.slice(0, 15)) {
+    const details = Object.entries(m.variables ?? {}).map(([key, value]) => `${key}=${value}`).join("  ");
+    console.log(`${m.sentAt.slice(11, 19)}  ${m.channel.padEnd(5)}  ${m.to}  [${m.template}]  ${details}`);
+  }
+}
+
 async function start() {
   if (state() === "running") console.log("The server is already running.");
   else {
@@ -116,19 +166,16 @@ switch (command) {
     if (now === "running") console.log("It is running and billed by the hour. Stop it with: pnpm stage:stop");
     break;
   }
-  case "logs": {
-    // Asks the server for the log of its start-up service, through Systems Manager.
-    const sent = JSON.parse(
-      aws(["ssm", "send-command", "--instance-ids", id, "--document-name", "AWS-RunShellScript", "--parameters", JSON.stringify({ commands: ["journalctl -u namma-stage --no-pager -n 80", "docker ps --format '{{.Names}}: {{.Status}}'"] })]),
-    );
-    await sleep(4000);
-    const result = JSON.parse(aws(["ssm", "get-command-invocation", "--command-id", sent.Command.CommandId, "--instance-id", id]));
-    console.log(result.StandardOutputContent || result.StandardErrorContent || `(${result.Status})`);
+  case "logs":
+    // The log of the start-up service, and which containers run.
+    console.log(await runOnServer(["journalctl -u namma-stage --no-pager -n 80", "docker ps --format '{{.Names}}: {{.Status}}'"]));
     break;
-  }
+  case "codes":
+    await codes(process.argv[3]);
+    break;
   case "shell":
     console.log(`Run this (needs the AWS Session Manager plugin):\n\n  aws ssm start-session --region ${REGION} --target ${id}\n`);
     break;
   default:
-    fail(`Unknown command "${command}". Use: start, stop, restart, status, logs or shell.`);
+    fail(`Unknown command "${command}". Use: start, stop, restart, status, logs, codes or shell.`);
 }
